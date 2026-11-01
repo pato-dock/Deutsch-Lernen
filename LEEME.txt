@@ -17,6 +17,12 @@ USAR
 - Cuando termines, cierra la ventana:
   el programa se apaga solo a los 20 minutos.
 
+HABLAR CON PERSONAJES (nuevo)
+- Sección «Hablar»: conversaciones por voz con personajes de Basilea y audios.
+- Necesita una IA gratuita: Ajustes → Conversación con IA → Google Gemini.
+  Entra en aistudio.google.com, pulsa «Get API key», copia la clave y pégala.
+- Para voces que suenan como personas reales, activa también Azure (Ajustes → Voz natural).
+
 ACTUALIZAR
 - Cuando te envíe una fase nueva, ejecuta su «Instalar.command» de la misma forma.
   Tu progreso y tus apuntes se conservan.

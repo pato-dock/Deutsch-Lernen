@@ -52,6 +52,7 @@ class Content:
         self.swiss = _load("swiss.json")
         self.plan = _load("plan.json")
         self.grammar_tr = _load("grammar_tr.json")
+        self.talk = _load("talk.json")
         self.items = {}
         self.themes = {}
         self.sheets = {s["id"]: s for s in self.grammar["sheets"]}

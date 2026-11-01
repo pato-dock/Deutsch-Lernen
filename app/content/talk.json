@@ -1,0 +1,173 @@
+{
+  "scenarios": [
+    {
+      "id": "baeckerei", "level": "A1", "icon": "🥨", "title": "En la panadería",
+      "partner": "Frau Meier", "g": "f", "voice": "ch",
+      "role": "Verkäuferin in einer kleinen Bäckerei in der Basler Altstadt. Freundlich, ein bisschen schnell. Sie siezt die Kundin.",
+      "setting": "Samstagmorgen in der Bäckerei. Es gibt Brezeln, Gipfeli, Brot, Kuchen und Kaffee zum Mitnehmen.",
+      "tasks": ["Saluda", "Pide dos Brezeln y un café", "Pregunta cuánto cuesta", "Despídete"],
+      "opener": ["Grüezi! Was darf es sein?", "¡Buenos días! ¿Qué desea?"]
+    },
+    {
+      "id": "nachbar", "level": "A1", "icon": "👋", "title": "Conocer a tu vecino",
+      "partner": "Jonas", "g": "m", "voice": "de",
+      "role": "Neuer Nachbar, ca. 30 Jahre alt, aus Freiburg, arbeitet als Lehrer. Offen und neugierig. Er duzt.",
+      "setting": "Im Treppenhaus eines Wohnhauses. Jonas ist gestern eingezogen.",
+      "tasks": ["Di tu nombre y de dónde eres", "Cuenta a qué te dedicas", "Hazle una pregunta a Jonas"],
+      "opener": ["Hallo! Ich bin Jonas, ich wohne seit gestern hier im zweiten Stock. Und du?", "¡Hola! Soy Jonas, vivo desde ayer aquí en el segundo piso. ¿Y tú?"]
+    },
+    {
+      "id": "tram", "level": "A1", "icon": "🚋", "title": "Perdida en el tranvía",
+      "partner": "Herr Keller", "g": "m", "voice": "ch",
+      "role": "Älterer, sehr hilfsbereiter Fahrgast im Basler Tram. Kennt die Stadt gut. Er siezt.",
+      "setting": "Im Tram Nummer 8 in Basel. Die Lernende möchte zum Bahnhof SBB.",
+      "tasks": ["Pregunta cómo llegar a la estación (Bahnhof SBB)", "Pregunta cuántas paradas faltan", "Da las gracias"],
+      "opener": ["Grüezi. Sie sehen ein bisschen verloren aus. Kann ich Ihnen helfen?", "Buenos días. Parece un poco perdida. ¿Puedo ayudarla?"]
+    },
+    {
+      "id": "arzt", "level": "A2", "icon": "🩺", "title": "Pedir cita en el médico",
+      "partner": "Frau Brunner", "g": "f", "voice": "de",
+      "role": "Medizinische Praxisassistentin am Telefon der Hausarztpraxis Dr. Huber. Professionell und geduldig. Sie siezt.",
+      "setting": "Ein Telefongespräch am Montagmorgen. Die Praxis hat diese Woche nur wenige freie Termine.",
+      "tasks": ["Explica qué te pasa", "Pide una cita para esta semana", "Confirma el día y la hora"],
+      "opener": ["Praxis Dr. Huber, Brunner am Apparat. Guten Tag, was kann ich für Sie tun?", "Consulta del Dr. Huber, al habla Brunner. Buenos días, ¿en qué puedo ayudarla?"]
+    },
+    {
+      "id": "restaurant", "level": "A2", "icon": "🍽️", "title": "Cenar en un restaurante",
+      "partner": "Marco", "g": "m", "voice": "de",
+      "role": "Kellner in einem italienischen Restaurant. Charmant und gesprächig. Er siezt die Gäste.",
+      "setting": "Freitagabend, das Restaurant ist fast voll. Heute gibt es Risotto mit Pilzen als Tagesgericht.",
+      "tasks": ["Pide una mesa para dos", "Pregunta si hay un plato vegetariano", "Pide algo de beber", "Pide la cuenta"],
+      "opener": ["Guten Abend und herzlich willkommen! Haben Sie reserviert?", "¡Buenas noches y bienvenidos! ¿Tienen reserva?"]
+    },
+    {
+      "id": "wochenende", "level": "A2", "icon": "☀️", "title": "Planes para el fin de semana",
+      "partner": "Lea", "g": "f", "voice": "de",
+      "role": "Gute Freundin, Fotografin, lebt auch in Basel. Locker und fröhlich. Sie duzt und spricht umgangssprachlich.",
+      "setting": "Ein Telefonat am Montagabend unter Freundinnen.",
+      "tasks": ["Cuenta qué hiciste el fin de semana pasado", "Propón un plan para el sábado", "Quedad a una hora y en un lugar"],
+      "opener": ["Hey, na? Wie war dein Wochenende?", "¡Hola! ¿Qué tal? ¿Cómo fue tu fin de semana?"]
+    },
+    {
+      "id": "wohnung", "level": "B1", "icon": "🏠", "title": "Visitar un piso",
+      "partner": "Herr Steiner", "g": "m", "voice": "ch",
+      "role": "Vermieter einer 3-Zimmer-Wohnung in Riehen bei Basel. Sachlich, etwas skeptisch, aber fair. Er siezt.",
+      "setting": "Wohnungsbesichtigung. Miete 1950 Franken plus 200 Franken Nebenkosten, frei ab dem 1. des übernächsten Monats, Haustiere nur nach Absprache.",
+      "tasks": ["Pregunta el alquiler y los gastos", "Pregunta desde cuándo está libre", "Pregunta si se permiten mascotas", "Muestra interés y pregunta por los siguientes pasos"],
+      "opener": ["Grüezi, kommen Sie herein! Das ist also die Wohnung. Schauen Sie sich ruhig um. Haben Sie Fragen?", "Buenos días, ¡pase! Pues este es el piso. Mire con calma. ¿Tiene alguna pregunta?"]
+    },
+    {
+      "id": "kundin", "level": "B1", "icon": "🎨", "title": "Reunión con una clienta",
+      "partner": "Frau Vogel", "g": "f", "voice": "de",
+      "role": "Inhaberin eines kleinen Cafés, möchte ein neues Logo und eine Speisekarte. Herzlich, aber unentschlossen. Begrenztes Budget. Sie siezt.",
+      "setting": "Erstes Treffen mit einer Grafikdesignerin im Café der Kundin.",
+      "tasks": ["Pregunta qué necesita exactamente", "Pregunta por el presupuesto y el plazo", "Propón una idea de diseño", "Resume lo acordado"],
+      "opener": ["Guten Tag, schön, dass es geklappt hat! Wir möchten für unser Café ein neues Logo, aber ehrlich gesagt haben wir noch keine genaue Vorstellung.", "Buenos días, ¡qué bien que haya podido venir! Queremos un logo nuevo para nuestro café, pero, sinceramente, aún no tenemos una idea clara."]
+    },
+    {
+      "id": "bewerbung", "level": "B2", "icon": "💼", "title": "Entrevista de trabajo",
+      "partner": "Herr Lehmann", "g": "m", "voice": "de",
+      "role": "Creative Director einer Designagentur in Basel. Freundlich, stellt aber gezielte Nachfragen. Er siezt.",
+      "setting": "Vorstellungsgespräch für eine Stelle als Senior Grafikdesignerin.",
+      "tasks": ["Preséntate y resume tu experiencia", "Explica por qué quieres el puesto", "Habla de un punto débil", "Haz una pregunta sobre el equipo"],
+      "opener": ["Herzlich willkommen und danke, dass Sie sich Zeit genommen haben. Erzählen Sie doch zuerst ein bisschen über sich.", "Bienvenida y gracias por su tiempo. Cuénteme primero un poco sobre usted."]
+    },
+    {
+      "id": "homeoffice", "level": "B2", "icon": "🗣️", "title": "Debate: ¿teletrabajo u oficina?",
+      "partner": "Sabine", "g": "f", "voice": "de",
+      "role": "Kollegin aus dem Marketing. Meinungsstark, hält das Büro für besser, lässt sich aber von guten Argumenten überzeugen. Sie duzt.",
+      "setting": "Kaffeepause in der Agentur. Die Geschäftsleitung überlegt, die Homeoffice-Tage zu reduzieren.",
+      "tasks": ["Da tu opinión con argumentos", "Responde a un contraargumento", "Propón un compromiso"],
+      "opener": ["Ich finde ja, dass Homeoffice total überbewertet ist. Im Büro arbeitet man einfach besser zusammen. Wie siehst du das?", "Yo creo que el teletrabajo está totalmente sobrevalorado. En la oficina se trabaja mejor en equipo. ¿Tú cómo lo ves?"]
+    },
+    {
+      "id": "frei", "level": "", "icon": "💬", "title": "Charla libre con Lena",
+      "partner": "Lena", "g": "f", "voice": "de",
+      "role": "Freundliche, geduldige Sprachpartnerin aus Hamburg. Interessiert sich für Design, Reisen und Essen. Sie duzt und stellt gern Rückfragen.",
+      "setting": "Ein lockeres Gespräch über alles, was die Lernende interessiert.",
+      "tasks": ["Cuenta algo de tu día", "Hazle una pregunta a Lena", "Habla de algo que te guste"],
+      "opener": ["Hallo! Schön, dich zu sehen. Worüber möchtest du heute sprechen?", "¡Hola! Qué bien verte. ¿De qué quieres hablar hoy?"]
+    }
+  ],
+  "listenings": [
+    {
+      "id": "cafe", "level": "A1", "title": "Im Café", "title_es": "En la cafetería",
+      "speakers": {"A": {"name": "Kellnerin", "g": "f"}, "B": {"name": "Gast", "g": "m"}},
+      "lines": [
+        ["A", "Guten Morgen! Was darf ich Ihnen bringen?", "¡Buenos días! ¿Qué le traigo?"],
+        ["B", "Guten Morgen. Einen Cappuccino, bitte.", "Buenos días. Un capuchino, por favor."],
+        ["A", "Gern. Möchten Sie auch etwas essen?", "Con gusto. ¿Quiere también algo de comer?"],
+        ["B", "Ja, ein Gipfeli, bitte. Was kostet das zusammen?", "Sí, un cruasán, por favor. ¿Cuánto cuesta todo junto?"],
+        ["A", "Der Cappuccino kostet vier Franken fünfzig, das Gipfeli zwei Franken. Zusammen sind das sechs Franken fünfzig.", "El capuchino cuesta cuatro francos con cincuenta y el cruasán, dos francos. En total son seis francos con cincuenta."],
+        ["B", "Kann ich mit Karte bezahlen?", "¿Puedo pagar con tarjeta?"],
+        ["A", "Natürlich, kein Problem.", "Por supuesto, no hay problema."],
+        ["B", "Danke schön. Einen schönen Tag noch!", "Muchas gracias. ¡Que tenga un buen día!"]
+      ],
+      "questions": [
+        ["¿Qué bebe el cliente?", ["Un café con leche", "Un capuchino", "Un té"], 1],
+        ["¿Cuánto paga en total?", ["4,50 francos", "6,50 francos", "2 francos"], 1],
+        ["¿Cómo paga?", ["En efectivo", "Con tarjeta", "No lo dice"], 1]
+      ],
+      "vocab": [["das Gipfeli", "el cruasán (en Suiza)"], ["zusammen", "junto, en total"], ["bezahlen", "pagar"], ["die Karte", "la tarjeta"]]
+    },
+    {
+      "id": "bahnhof", "level": "A2", "title": "Am Bahnhof", "title_es": "En la estación",
+      "speakers": {"A": {"name": "Reisende", "g": "f"}, "B": {"name": "Mitarbeiter", "g": "m"}},
+      "lines": [
+        ["A", "Entschuldigung, wann fährt der nächste Zug nach Zürich?", "Perdone, ¿cuándo sale el próximo tren a Zúrich?"],
+        ["B", "Der nächste Zug fährt um 14.07 Uhr von Gleis 12.", "El próximo tren sale a las 14:07 del andén 12."],
+        ["A", "Muss ich umsteigen?", "¿Tengo que hacer transbordo?"],
+        ["B", "Nein, der Zug fährt direkt. Sie sind in etwa einer Stunde in Zürich.", "No, el tren es directo. Llegará a Zúrich en una hora, más o menos."],
+        ["A", "Super. Ich habe noch kein Ticket. Kann ich es hier kaufen?", "Genial. Aún no tengo billete. ¿Puedo comprarlo aquí?"],
+        ["B", "Ja, am Automaten oder in der App. Mit dem Halbtax ist es günstiger.", "Sí, en la máquina o en la app. Con el abono Halbtax es más barato."],
+        ["A", "Das Halbtax habe ich leider nicht. Vielen Dank für die Hilfe!", "Por desgracia, no tengo el Halbtax. ¡Muchas gracias por la ayuda!"],
+        ["B", "Gern geschehen. Gute Reise!", "De nada. ¡Buen viaje!"]
+      ],
+      "questions": [
+        ["¿A qué hora sale el tren?", ["A las 13:07", "A las 14:07", "A las 14:17"], 1],
+        ["¿Tiene que cambiar de tren?", ["Sí, en Olten", "No, es directo", "No lo dice"], 1],
+        ["¿Por qué no paga menos?", ["Porque no tiene el Halbtax", "Porque la máquina no funciona", "Porque viaja en primera clase"], 0]
+      ],
+      "vocab": [["umsteigen", "hacer transbordo"], ["das Gleis", "la vía, el andén"], ["der Automat", "la máquina expendedora"], ["günstig", "barato"]]
+    },
+    {
+      "id": "stelle", "level": "B1", "title": "Die neue Stelle", "title_es": "El nuevo trabajo",
+      "speakers": {"A": {"name": "Mia", "g": "f"}, "B": {"name": "David", "g": "m"}},
+      "lines": [
+        ["A", "Hallo David! Ich habe tolle Neuigkeiten: Ich habe die Stelle bei der Agentur bekommen!", "¡Hola, David! Tengo una noticia genial: ¡me han dado el puesto en la agencia!"],
+        ["B", "Echt? Herzlichen Glückwunsch! Wann fängst du an?", "¿En serio? ¡Enhorabuena! ¿Cuándo empiezas?"],
+        ["A", "Am ersten März. Am Anfang arbeite ich vier Tage pro Woche, später vielleicht Vollzeit.", "El uno de marzo. Al principio trabajo cuatro días a la semana; más adelante, quizá a jornada completa."],
+        ["B", "Und was genau wirst du dort machen?", "¿Y qué vas a hacer allí exactamente?"],
+        ["A", "Ich bin für das Corporate Design von zwei großen Kunden zuständig. Außerdem darf ich einmal pro Woche im Homeoffice arbeiten.", "Me encargo del diseño corporativo de dos clientes grandes. Además, puedo teletrabajar un día a la semana."],
+        ["B", "Das klingt perfekt. Ist der Weg dorthin nicht ziemlich weit?", "Suena perfecto. ¿No te queda bastante lejos?"],
+        ["A", "Nein, mit dem Velo brauche ich nur zwanzig Minuten.", "No, en bici solo tardo veinte minutos."],
+        ["B", "Dann müssen wir das am Wochenende unbedingt feiern!", "¡Entonces tenemos que celebrarlo sin falta el fin de semana!"]
+      ],
+      "questions": [
+        ["¿Cuándo empieza Mia?", ["El 1 de marzo", "El 1 de mayo", "La semana que viene"], 0],
+        ["¿Cuántos días trabaja al principio?", ["Tres", "Cuatro", "Cinco"], 1],
+        ["¿Cómo va a ir al trabajo?", ["En tranvía", "En coche", "En bicicleta"], 2]
+      ],
+      "vocab": [["die Neuigkeit", "la noticia"], ["zuständig sein für", "encargarse de"], ["das Velo", "la bici (en Suiza)"], ["feiern", "celebrar"]]
+    },
+    {
+      "id": "podcast", "level": "B2", "title": "Podcast: Ständig erreichbar", "title_es": "Pódcast: siempre localizables",
+      "speakers": {"A": {"name": "Moderatorin", "g": "f"}, "B": {"name": "Experte", "g": "m"}},
+      "lines": [
+        ["A", "Willkommen zu einer neuen Folge von «Alltag im Wandel». Heute geht es um die Frage, wie viel Zeit wir eigentlich am Smartphone verbringen.", "Bienvenidos a un nuevo episodio de «La vida cotidiana en cambio». Hoy hablamos de cuánto tiempo pasamos en realidad con el móvil."],
+        ["B", "Viele Erwachsene kommen auf mehr als drei Stunden am Tag. Das Problem ist aber weniger die Dauer als die ständige Unterbrechung.", "Muchos adultos pasan más de tres horas al día. Pero el problema no es tanto la duración como la interrupción constante."],
+        ["A", "Was meinen Sie mit Unterbrechung?", "¿A qué se refiere con interrupción?"],
+        ["B", "Jede Benachrichtigung reißt uns aus der Konzentration. Bis wir wieder voll bei der Sache sind, vergehen oft mehrere Minuten.", "Cada notificación nos saca de la concentración. Hasta que volvemos a estar plenamente centrados, a menudo pasan varios minutos."],
+        ["A", "Und was raten Sie unseren Hörerinnen und Hörern?", "¿Y qué aconseja a quienes nos escuchan?"],
+        ["B", "Ganz einfach: Benachrichtigungen ausschalten und feste Zeiten für E-Mails einplanen. Wer das konsequent macht, merkt schon nach einer Woche einen Unterschied.", "Muy sencillo: desactivar las notificaciones y reservar horarios fijos para el correo. Quien lo hace de forma constante nota la diferencia ya al cabo de una semana."]
+      ],
+      "questions": [
+        ["Según el experto, ¿cuál es el problema principal?", ["La duración", "Las interrupciones constantes", "El precio del móvil"], 1],
+        ["¿Qué pasa después de una notificación?", ["Tardamos en volver a concentrarnos", "Trabajamos más rápido", "No pasa nada"], 0],
+        ["¿Qué recomienda?", ["Dejar de usar el móvil", "Desactivar notificaciones y fijar horarios para el correo", "Trabajar solo por la noche"], 1]
+      ],
+      "vocab": [["die Folge", "el episodio"], ["die Benachrichtigung", "la notificación"], ["bei der Sache sein", "estar centrado"], ["konsequent", "de forma constante"]]
+    }
+  ],
+  "topics": ["En el supermercado", "Una cita con amigos", "En la oficina de diseño", "De viaje por Suiza", "En la farmacia", "Buscar piso", "La Fasnacht de Basilea", "Una reunión de trabajo", "Hacer deporte", "Cocinar juntos"]
+}

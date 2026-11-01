@@ -68,10 +68,14 @@ const TTS = {
     load();
     speechSynthesis.onvoiceschanged = load;
   },
-  systemVoice(swiss) {
+  systemVoice(swiss, g) {
     const vs = S.voices;
     if (!vs.length) return null;
     if (swiss) { const ch = vs.find((v) => /de[-_]CH/i.test(v.lang)); if (ch) return ch; }
+    if (g) { // personajes: voz de mujer o de hombre si el Mac la tiene
+      const names = g === "m" ? ["Markus", "Yannick", "Martin", "Reed", "Eddy", "Rocko"] : ["Anna", "Petra", "Helena", "Katja", "Sandy", "Shelley", "Google Deutsch"];
+      for (const n of names) { const v = vs.find((x) => x.name.startsWith(n)); if (v) return v; }
+    }
     const chosen = vs.find((v) => v.name === S.settings.system_voice);
     if (chosen) return chosen;
     const pref = ["Anna", "Petra", "Helena", "Markus", "Yannick", "Martin"];
@@ -81,40 +85,57 @@ const TTS = {
   current: null,
   url(text, opts) {
     const rate = (Number(S.settings.rate) || 0.95) * (opts.slow ? 0.7 : 1);
-    const voice = opts.swiss ? S.settings.azure_voice_ch : S.settings.azure_voice;
+    const voice = opts.voice || (opts.swiss ? S.settings.azure_voice_ch : S.settings.azure_voice);
     return `/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}&rate=${rate.toFixed(2)}`;
   },
   preload(text, opts = {}) { fetch(this.url(text, opts)).catch(() => {}); },
+  natural() { return S.settings.voice_engine === "azure" && S.settings.azure_key_set; },
+  token: 0,
+  stop() {
+    this.token += 1;
+    if (this.current) { this.current.pause(); this.current = null; }
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+  },
+  // Devuelve una promesa que se cumple cuando termina de hablar (para las conversaciones).
   async speak(text, opts = {}) {
     if (!text) return;
     const rate = (Number(S.settings.rate) || 0.95) * (opts.slow ? 0.7 : 1);
-    if (this.current) { this.current.pause(); this.current = null; }
-    if ("speechSynthesis" in window) speechSynthesis.cancel();
-    if (S.settings.voice_engine === "azure" && S.settings.azure_key_set) {
+    this.stop();
+    const token = this.token;
+    if (this.natural()) {
       try {
         const r = await fetch(this.url(text, opts));
+        if (token !== this.token) return;
         if (r.ok) {
           const url = URL.createObjectURL(await r.blob());
+          if (token !== this.token) return;
           const a = new Audio(url);
           this.current = a;
-          await a.play();
+          await new Promise((res) => { a.onended = res; a.onerror = res; a.onpause = res; a.play().catch(res); });
           return;
         }
         if (!this.warned) { toast("No se pudo usar la voz de Azure; uso la voz del Mac."); this.warned = true; }
       } catch (e) { /* sin conexión: voz del sistema */ }
     }
-    if (!("speechSynthesis" in window)) return;
+    if (!("speechSynthesis" in window) || token !== this.token) return;
     const u = new SpeechSynthesisUtterance(text);
-    const v = this.systemVoice(opts.swiss);
+    const v = this.systemVoice(opts.swiss, opts.g);
     if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = "de-DE"; }
     u.rate = rate;
-    speechSynthesis.speak(u);
+    // si el Mac no tiene voz de hombre, al menos cambia el tono
+    if (opts.g === "m" && v && !/Markus|Yannick|Martin|Reed|Eddy|Rocko/.test(v.name)) u.pitch = 0.75;
+    await new Promise((res) => {
+      u.onend = res; u.onerror = res;
+      const guard = setTimeout(res, 2000 + text.length * 120); // Safari a veces no avisa al terminar
+      u.addEventListener("end", () => clearTimeout(guard));
+      speechSynthesis.speak(u);
+    });
   },
 };
 
 // ====================================================================== estructura
 function shell(active, content) {
-  const nav = [["hoy", "☀️", "Hoy"], ["ruta", "🧭", "Ruta"], ["apuntes", "📚", "Apuntes"], ["progreso", "📈", "Progreso"]];
+  const nav = [["hoy", "☀️", "Hoy"], ["hablar", "🗣️", "Hablar"], ["ruta", "🧭", "Ruta"], ["apuntes", "📚", "Apuntes"], ["progreso", "📈", "Progreso"], ["premios", "🏆", "Premios"]];
   return `<div class="app">
     <nav class="rail" aria-label="Secciones">
       <a class="brand" href="#/hoy" aria-label="Inicio"><span class="b1"></span><span class="b2"></span><span class="b3"></span></a>
@@ -122,14 +143,15 @@ function shell(active, content) {
       <div class="spacer"></div>
       <button class="nav ${active === "ajustes" ? "on" : ""}" data-go="#/ajustes"><span class="ic">⚙️</span>Ajustes</button>
     </nav>
-    <main class="main" id="main">${content}</main>
+    <main class="main" id="main"><div class="hud" id="hud" aria-label="Tu juego"></div>${content}</main>
   </div>`;
 }
 
-function mount(active, html) {
+function mount(active, html, game) {
   $("#root").innerHTML = shell(active, html);
   $$("[data-go]").forEach((b) => b.addEventListener("click", () => { location.hash = b.dataset.go; }));
   window.scrollTo(0, 0);
+  refreshHud(game);
 }
 
 // ====================================================================== router
@@ -141,9 +163,11 @@ async function route() {
     if (view === "bienvenida") return viewWelcome();
     if (view === "test") return viewPlacement();
     if (view === "ruta") return viewRoute();
+    if (view === "hablar") return viewTalk(a || "conversar");
+    if (view === "premios") return viewRewards();
     if (view === "apuntes") return viewLibrary(a || "vocab", b);
     if (view === "progreso") return viewProgress();
-    if (view === "ajustes") return viewSettings();
+    if (view === "ajustes") return viewSettings(a);
     return viewHome();
   } catch (e) {
     console.error(e);
@@ -231,7 +255,7 @@ async function viewPlacement() {
 
 // ====================================================================== inicio
 async function viewHome() {
-  const h = await api.get("/api/home");
+  const [h, g] = await Promise.all([api.get("/api/home"), api.get("/api/game")]);
   const greet = h.name ? `Hallo, ${esc(h.name)}` : "Hallo";
   const plan = [
     `<span class="chip">⏱ ${h.minutes} min</span>`,
@@ -250,13 +274,25 @@ async function viewHome() {
         <div class="plan">${plan}</div>
         <button class="btn primary big" id="start">${h.done_today ? "Hacer otra sesión" : "Empezar"} <span class="kbd">Enter</span></button>
       </section>
-      <section class="card streak">
-        <div>
-          <p class="muted" style="margin:0">Racha</p>
-          <div class="num">${h.streak}<span style="font-size:1.4rem"> ${h.streak === 1 ? "día" : "días"}</span></div>
-          <p class="small muted" style="margin:6px 0 0">Un día de descanso por semana no la rompe.</p>
+      <section class="card streak gamecard">
+        <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap">
+          <div>
+            <p class="muted" style="margin:0">Racha</p>
+            <div class="num"><span class="flame ${g.practiced_today ? "lit" : ""}">🔥</span>${g.streak}<span style="font-size:1.4rem"> ${g.streak === 1 ? "día" : "días"}</span></div>
+            <p class="small muted" style="margin:6px 0 0">${g.practiced_today ? "¡Hoy ya cuenta!" : "Practica hoy para mantenerla."}${g.freezes ? ` · 🧊 ${g.freezes}` : ""}</p>
+          </div>
+          ${goalRing(g.xp_today, g.goal, 104)}
         </div>
-        <div class="week">${h.week.map((d, k) => `<div class="d ${d.n >= 10 ? "on" : ""} ${k === 6 ? "today" : ""}"><i></i>${d.label}</div>`).join("")}</div>
+        ${weekDots(g.week)}
+      </section>
+    </div>
+    <div class="grid g2" style="margin-top:16px">
+      ${questsCard(g)}
+      <section class="card talkcard">
+        <div class="avatars" aria-hidden="true"><span class="av f">L</span><span class="av m">J</span><span class="av ch">M</span></div>
+        <h2 style="margin:12px 0 4px">Habla con alguien</h2>
+        <p class="muted" style="margin:0 0 16px">Conversaciones por voz con personajes de Basilea: la panadera, tu vecino, una clienta… Ellos te contestan y te corrigen con cariño.</p>
+        <div class="row"><a class="btn primary" href="#/hablar">🗣️ Empezar a hablar</a><a class="btn" href="#/hablar/escuchar">🎧 Escuchar un audio</a></div>
       </section>
     </div>
     ${S.settings.voice_engine === "azure" && S.settings.azure_key_set ? "" : `<section class="card voice-banner"><div><b>🎙️ Activa la voz natural (gratis)</b><br><span class="muted small">Ahora suena la voz del Mac, que es artificial. Con Azure oirás voces casi humanas, también suizas.</span></div><a class="btn primary" href="#/ajustes">Configurar · 5 min</a></section>`}
@@ -275,7 +311,9 @@ async function viewHome() {
       <button class="shortcut" data-practice="weak"><span class="ic">🎯</span><span><b>Puntos débiles</b><br><span class="muted small">Lo que más te cuesta</span></span></button>
       <button class="shortcut" data-practice="verbs"><span class="ic">🔁</span><span><b>Verbos</b><br><span class="muted small">Conjugación salteada</span></span></button>
       <button class="shortcut" data-practice="swiss"><span class="ic"><span class="swissflag">+</span></span><span><b>Suizo-alemán</b><br><span class="muted small">Para la calle en Basilea</span></span></button>
-    </div>`);
+    </div>`, g);
+  if (g.message) toast(g.message, 4200);
+  showRewards(g.rewards);
   $("#start").addEventListener("click", () => startSession("/api/session"));
   $$("[data-practice]").forEach((b) => b.addEventListener("click", () => startSession(`/api/practice?kind=${b.dataset.practice}`)));
   document.onkeydown = (e) => { if (e.key === "Enter" && document.activeElement === document.body) startSession("/api/session"); };
@@ -305,6 +343,7 @@ class Session {
     this.requeued = new Set();
     this.answered = false;
     this.sinceBreak = 0;
+    this.combo = 0; this.maxCombo = 0;
   }
 
   open() {
@@ -315,6 +354,7 @@ class Session {
       <header class="ftop">
         <button class="icon-btn" id="quit" title="Salir (Esc)" aria-label="Salir">✕</button>
         <div class="segments" id="segs"></div>
+        <div class="combo" id="combo" aria-live="polite"></div>
         <div class="timer ${S.settings.show_timer === false ? "hidden" : ""}"><span id="clock">0:00</span><span class="tbar"><i id="tbar" style="width:0%"></i></span></div>
       </header>
       <div class="stage" id="stage"></div>
@@ -600,6 +640,7 @@ class Session {
     const ms = Date.now() - this.started;
     this.done += 1; this.blockN += 1; this.sinceBreak += 1;
     if (right) { this.ok += 1; this.blockOk += 1; }
+    this.bumpCombo(right);
     api.post("/api/answer", { item: ex.item, type: ex.type, skill: ex.skill, correct: right, ms, requeue: !!ex.requeue });
     if (!right && !this.requeued.has(ex.item)) {
       this.requeued.add(ex.item);
@@ -637,6 +678,20 @@ class Session {
       this.list = this.list.filter((x, idx) => !(idx > this.i && x.item === ex.item && x.requeue));
       this.next();
     });
+  }
+
+  bumpCombo(right) {
+    const el = $("#combo", this.el);
+    if (!right) { this.combo = 0; el.className = "combo"; el.innerHTML = ""; Sound.wrong(); return; }
+    this.combo += 1;
+    this.maxCombo = Math.max(this.maxCombo, this.combo);
+    if (this.combo >= 3) {
+      el.innerHTML = `🔥 <b>${this.combo}</b> seguidas`;
+      el.className = "combo on";
+      void el.offsetWidth; el.classList.add("bump");
+      Sound.combo(this.combo);
+    } else Sound.right();
+    floatText($("#fb", this.el), "+10 XP");
   }
 
   async showSheet(id) {
@@ -684,25 +739,749 @@ class Session {
     this.mode = "end";
     clearInterval(this.tick);
     const seconds = Math.round((Date.now() - this.t0) / 1000);
-    const r = await api.post("/api/finish", { total: this.done, correct: this.ok, seconds, complete, kind: this.data.kind });
+    const r = await api.post("/api/finish", { total: this.done, correct: this.ok, seconds, complete, kind: this.data.kind, max_combo: this.maxCombo });
     const pct = this.done ? Math.round((this.ok / this.done) * 100) : 0;
     $("#segs", this.el).innerHTML = "";
+    $("#combo", this.el).innerHTML = "";
     $("#fb", this.el).className = "fb idle";
     $("#stage", this.el).innerHTML = `<div class="ex breaker">
-      <div style="font-size:4rem">${complete ? "🎉" : "👏"}</div>
+      <div class="trophy">${complete ? "🏆" : "👏"}</div>
       <h1>${complete ? "¡Sesión completada!" : "Buen trabajo"}</h1>
       ${r.level_up ? `<div class="tip" style="text-align:left">🚀 <b>¡Subes a ${r.level_up}!</b> Has visto casi todo tu nivel con buenos resultados. Las próximas sesiones traen contenido de ${r.level_up}.</div>` : ""}
-      <div class="grid g3" style="margin:24px 0">
-        <div class="card stat"><div class="v">${this.ok}/${this.done}</div><div class="l">aciertos · ${pct} %</div></div>
-        <div class="card stat"><div class="v">+${r.xp}</div><div class="l">puntos</div></div>
-        <div class="card stat"><div class="v">${r.streak}</div><div class="l">${r.streak === 1 ? "día" : "días"} de racha</div></div>
-      </div>
+      ${endStats(r, [[`${this.ok}/${this.done}`, `aciertos · ${pct} %`], [`🔥 ${this.maxCombo}`, "mejor combo"]])}
       <p class="muted">${Math.floor(seconds / 60)} min ${seconds % 60} s. Lo que has fallado volverá en las próximas sesiones.</p>
       <button class="btn primary big" id="home">Volver al inicio <span class="kbd">Enter</span></button>
     </div>`;
+    celebrate(r, complete);
     $("#home", this.el).addEventListener("click", () => { this.close(); route(); });
     $("#home", this.el).focus();
   }
+}
+
+// ====================================================================== juego: sonidos, efectos y recompensas
+const Sound = {
+  ctx: null,
+  play(notes, { dur = 0.13, type = "sine", gap = 0.085, vol = 0.09 } = {}) {
+    if (S.settings.sound === false) return;
+    try {
+      this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      const t0 = this.ctx.currentTime + 0.01;
+      notes.forEach((f, i) => {
+        const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+        o.type = type; o.frequency.value = f;
+        const t = t0 + i * gap;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(vol, t + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        o.connect(g).connect(this.ctx.destination);
+        o.start(t); o.stop(t + dur + 0.02);
+      });
+    } catch (e) { /* sin audio */ }
+  },
+  right() { this.play([659, 988]); },
+  wrong() { this.play([294, 247], { type: "triangle", dur: 0.18, gap: 0.12, vol: 0.06 }); },
+  combo(n) { const k = 1 + Math.min(n, 15) * 0.025; this.play([523 * k, 659 * k, 988 * k], { gap: 0.06 }); },
+  reward() { this.play([784, 988, 1175, 1568], { type: "triangle", gap: 0.07, dur: 0.16 }); },
+  win() { this.play([523, 659, 784, 1047, 1319], { type: "triangle", gap: 0.1, dur: 0.22, vol: 0.08 }); },
+  tick() { this.play([1200], { dur: 0.04, vol: 0.03 }); },
+};
+
+const calm = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function floatText(anchor, text) {
+  if (!anchor || calm()) return;
+  const f = document.createElement("div");
+  f.className = "floaty";
+  f.textContent = text;
+  anchor.appendChild(f);
+  setTimeout(() => f.remove(), 1100);
+}
+
+function confetti(n = 90) {
+  if (calm()) return;
+  const box = document.createElement("div");
+  box.className = "confetti";
+  box.setAttribute("aria-hidden", "true");
+  const colors = ["var(--der)", "var(--die)", "var(--das)", "var(--focus)", "var(--pl)", "var(--brand)"];
+  for (let i = 0; i < n; i++) {
+    const c = document.createElement("i");
+    c.style.left = `${Math.random() * 100}%`;
+    c.style.background = colors[i % colors.length];
+    c.style.setProperty("--dx", `${(Math.random() - 0.5) * 220}px`);
+    c.style.setProperty("--rot", `${Math.random() * 900 - 450}deg`);
+    c.style.animationDelay = `${Math.random() * 0.5}s`;
+    c.style.animationDuration = `${1.8 + Math.random() * 1.4}s`;
+    if (i % 3 === 0) c.style.borderRadius = "50%";
+    box.appendChild(c);
+  }
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), 3800);
+}
+
+function countUp(el, to, ms = 900) {
+  if (!el) return;
+  if (calm()) { el.textContent = to; return; }
+  const t0 = performance.now();
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / ms);
+    el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// Muestra una a una las recompensas nuevas (misiones, cofre, logros).
+function showRewards(list) {
+  if (!list || !list.length) return;
+  let i = 0;
+  const next = () => {
+    if (i >= list.length) { refreshHud(); return; }
+    const r = list[i++];
+    const el = document.createElement("div");
+    el.className = `reward-pop ${r.achievement ? "ach" : ""}`;
+    el.setAttribute("role", "status");
+    el.innerHTML = `<span class="ic">${r.icon}</span><span><b>${esc(r.title)}</b><br><span class="small">${esc(r.text)}</span></span><span class="gem">+${r.gems} 🥨</span>`;
+    document.body.appendChild(el);
+    Sound.reward();
+    if (r.achievement) confetti(50);
+    setTimeout(() => { el.classList.add("out"); setTimeout(() => { el.remove(); next(); }, 300); }, 2600);
+  };
+  next();
+}
+
+// Pantalla final común: XP que sube, meta diaria y premios.
+function endStats(r, extra = []) {
+  const g = r.game || {};
+  return `<div class="endstats">
+    ${goalRing(g.xp_today || 0, g.goal || 50, 132)}
+    <div class="grid g3" style="flex:1">
+      <div class="card stat xp"><div class="v">+<span data-count="${r.xp}">${r.xp}</span></div><div class="l">XP${r.boosted ? " · ⚡ doble" : ""}</div></div>
+      ${r.gems ? `<div class="card stat"><div class="v">+${r.gems} 🥨</div><div class="l">Brezeln</div></div>` : ""}
+      <div class="card stat"><div class="v">🔥 ${r.streak}</div><div class="l">${r.streak === 1 ? "día" : "días"} de racha</div></div>
+      ${extra.map(([v, l]) => `<div class="card stat"><div class="v">${v}</div><div class="l">${l}</div></div>`).join("")}
+    </div></div>`;
+}
+
+function celebrate(r, big = true) {
+  $$("[data-count]").forEach((el) => countUp(el, Number(el.dataset.count)));
+  $$(".goalring .val").forEach((v) => requestAnimationFrame(() => { v.style.strokeDashoffset = v.dataset.to; }));
+  if (big) { Sound.win(); confetti(); }
+  setTimeout(() => showRewards(r.rewards), big ? 900 : 300);
+}
+
+function goalRing(xp, goal, size = 104) {
+  const R = 44, C = 2 * Math.PI * R;
+  const pct = Math.min(1, goal ? xp / goal : 0);
+  const done = xp >= goal;
+  return `<div class="goalring ${done ? "done" : ""}" style="width:${size}px;height:${size}px" title="Meta diaria: ${xp} de ${goal} XP">
+    <svg viewBox="0 0 100 100" aria-hidden="true"><defs><linearGradient id="gr-${size}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F5D04A"/><stop offset="1" stop-color="#D0271D"/></linearGradient></defs>
+      <circle class="track" cx="50" cy="50" r="${R}"/><circle class="val" cx="50" cy="50" r="${R}" stroke="url(#gr-${size})" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}" data-to="${C * (1 - pct)}"/></svg>
+    <div class="in">${done ? `<span class="ok">✓</span>` : `<b>${xp}</b>`}<span>${done ? "meta" : `/ ${goal} XP`}</span></div></div>`;
+}
+
+function weekDots(week) {
+  return `<div class="week">${week.map((d, k) => `<div class="d ${d.on ? "on" : ""} ${d.frozen ? "frozen" : ""} ${k === 6 ? "today" : ""}" title="${d.day}"><i>${d.frozen ? "🧊" : d.on ? "✓" : ""}</i>${d.label}</div>`).join("")}</div>`;
+}
+
+function questsCard(g) {
+  const all = g.quests.every((q) => q.done);
+  return `<section class="card quests"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Misiones de hoy</h2><span class="muted small">se renuevan a medianoche</span></div>
+    ${g.quests.map((q) => `<div class="quest ${q.done ? "done" : ""}"><span class="qi">${q.icon}</span>
+      <div class="qb"><div class="qt">${esc(q.title)}</div><div class="bar"><i style="width:${(q.value / q.target) * 100}%"></i></div></div>
+      <span class="qr">${q.done ? "✓" : `${q.value}/${q.target}`}<br><span class="small muted">🥨 ${q.reward}</span></span></div>`).join("")}
+    <div class="chest ${g.chest.claimed ? "open" : all ? "ready" : ""}"><span class="qi">${g.chest.claimed ? "🎉" : "🎁"}</span>
+      <span>${g.chest.claimed ? "Cofre abierto: ¡misiones completas!" : `Cofre del día: completa las tres misiones · <b>+${g.chest.gems} 🥨</b>`}</span></div>
+  </section>`;
+}
+
+async function refreshHud(g) {
+  const el = $("#hud");
+  if (!el) return;
+  try { g = g || (await api.get("/api/game")); } catch (e) { return; }
+  S.game = g;
+  const pct = Math.min(100, Math.round((g.xp_today / g.goal) * 100));
+  const rk = g.rank, rp = Math.round(((g.xp_total - rk.floor) / (rk.next - rk.floor)) * 100);
+  el.innerHTML = `
+    <a class="pill ${g.practiced_today ? "lit" : ""}" href="#/premios" title="Racha"><span class="flame">🔥</span><b>${g.streak}</b></a>
+    <a class="pill" href="#/premios" title="Brezeln: la moneda del juego">🥨 <b>${g.gems}</b></a>
+    <a class="pill goal" href="#/premios" title="Meta diaria"><span class="mini" style="--p:${pct}"></span><b>${g.xp_today}</b><span class="muted">/${g.goal} XP</span></a>
+    <a class="pill rank" href="#/premios" title="Rango ${rk.n}: ${esc(rk.title)} · ${g.xp_total} XP"><span class="rk">${rk.n}</span><span class="rbar"><i style="width:${rp}%"></i></span></a>
+    ${g.boost ? `<span class="pill boost" title="Doble XP activo">⚡×2 · ${Math.ceil(g.boost / 60)} min</span>` : ""}`;
+}
+
+// ====================================================================== micrófono (reconocimiento de voz)
+// 1) Reconocimiento del navegador (Chrome, Edge, Safari): gratis y con texto en directo.
+// 2) Si no existe o falla, Azure Speech (incluido en el plan gratuito) grabando en WAV.
+const Mic = {
+  rec: null, stopFn: null, webFailed: false,
+  web() { return window.SpeechRecognition || window.webkitSpeechRecognition; },
+  azureOK() { return !!(S.settings.azure_key_set && navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
+  available() { return !!this.web() || this.azureOK(); },
+  get busy() { return !!(this.rec || this.stopFn); },
+  async listen(onText) {
+    if (this.web() && !this.webFailed) {
+      try { return await this.listenWeb(onText); } catch (e) { if (!(this.webFailed && this.azureOK())) throw e; }
+    }
+    if (this.azureOK()) return this.listenAzure(onText);
+    throw new Error("no-mic");
+  },
+  listenWeb(onText) {
+    return new Promise((resolve, reject) => {
+      const rec = new (this.web())();
+      this.rec = rec;
+      rec.lang = "de-DE"; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+      let final = "", interim = "", err = null;
+      rec.onresult = (e) => {
+        interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += t; else interim += t;
+        }
+        onText && onText((final + " " + interim).trim());
+      };
+      rec.onerror = (e) => { err = e.error; if (["network", "service-not-allowed", "language-not-supported"].includes(e.error)) this.webFailed = true; };
+      rec.onend = () => {
+        this.rec = null;
+        const text = (final || interim).trim();
+        if (!text && err && !["no-speech", "aborted"].includes(err)) reject(new Error(err)); else resolve(text);
+      };
+      try { rec.start(); } catch (e) { this.rec = null; reject(e); }
+    });
+  },
+  async listenAzure(onText) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const chunks = [];
+    let heard = false, quiet = 0;
+    const t0 = Date.now();
+    onText && onText("…");
+    return new Promise((resolve, reject) => {
+      const stop = async () => {
+        if (this.stopFn !== stop) return;
+        this.stopFn = null;
+        proc.disconnect(); src.disconnect();
+        stream.getTracks().forEach((t) => t.stop());
+        const rate = ctx.sampleRate;
+        ctx.close();
+        if (!heard) return resolve("");
+        onText && onText("Reconociendo…");
+        try {
+          const r = await fetch("/api/stt", { method: "POST", body: wavFrom(chunks, rate) });
+          const j = await r.json();
+          if (j.error) reject(new Error(j.error)); else resolve(j.text || "");
+        } catch (e) { reject(e); }
+      };
+      this.stopFn = stop;
+      proc.onaudioprocess = (e) => {
+        const d = e.inputBuffer.getChannelData(0);
+        chunks.push(new Float32Array(d));
+        let sum = 0;
+        for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
+        const rms = Math.sqrt(sum / d.length);
+        if (rms > 0.02) { heard = true; quiet = 0; } else quiet += d.length / ctx.sampleRate;
+        const el = Date.now() - t0;
+        if ((heard && quiet > 1.4) || el > 25000 || (!heard && el > 9000)) stop();
+      };
+      src.connect(proc); proc.connect(ctx.destination);
+    });
+  },
+  stop() { if (this.rec) this.rec.stop(); if (this.stopFn) this.stopFn(); },
+  cancel() {
+    if (this.rec) { this.rec.onresult = null; try { this.rec.abort(); } catch (e) { /* ya parado */ } }
+    if (this.stopFn) this.stopFn();
+  },
+};
+
+function wavFrom(chunks, inRate, outRate = 16000) {
+  const len = chunks.reduce((a, c) => a + c.length, 0);
+  const all = new Float32Array(len);
+  let o = 0;
+  for (const c of chunks) { all.set(c, o); o += c.length; }
+  const ratio = inRate / outRate, n = Math.floor(len / ratio);
+  const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (p, str) => { for (let i = 0; i < str.length; i++) v.setUint8(p + i, str.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, outRate, true); v.setUint32(28, outRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    let sum = 0, cnt = 0;
+    for (let j = Math.floor(i * ratio); j < Math.floor((i + 1) * ratio) && j < len; j++) { sum += all[j]; cnt++; }
+    const x = Math.max(-1, Math.min(1, cnt ? sum / cnt : 0));
+    v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+function micError(e) {
+  const m = String((e && e.message) || e);
+  if (/not-allowed|Permission|NotAllowed/i.test(m)) return "El navegador no deja usar el micrófono. Permítelo en el candado de la barra de direcciones (o en Ajustes del Sistema → Privacidad → Micrófono).";
+  if (m === "no-mic") return "Este navegador no reconoce la voz. Usa Chrome o Edge, o activa Azure en Ajustes. Mientras, puedes escribir.";
+  if (/network/.test(m)) return "El reconocimiento de voz necesita internet. Puedes escribir tu respuesta.";
+  if (/audio-capture|NotFound/i.test(m)) return "No encuentro ningún micrófono.";
+  return `No he podido escucharte (${m}). Puedes escribir tu respuesta.`;
+}
+
+// ====================================================================== hablar: conversaciones y audios
+async function viewTalk(tab) {
+  const tabs = `<div class="tabs">${[["conversar", "🗣️ Conversar"], ["escuchar", "🎧 Escuchar"]].map(([id, l]) => `<button class="tab ${tab === id ? "on" : ""}" data-go="#/hablar/${id}">${l}</button>`).join("")}</div>`;
+  const head = `<div class="view-head"><div><h1>Hablar</h1><p class="muted">Habla con personajes reales de tu día a día y escucha audios con voces naturales.</p></div></div>`;
+  const voiceNote = TTS.natural() ? "" : `<section class="card voice-banner" style="margin:0 0 16px"><div><b>🎙️ Para que suene como una persona real, activa la voz natural (gratis)</b><br><span class="muted small">Ahora suena la voz del Mac. Con Azure, cada personaje tiene una voz humana, también con acento suizo.</span></div><a class="btn primary" href="#/ajustes">Configurar</a></section>`;
+  if (tab === "escuchar") return viewListen(head + tabs + voiceNote);
+  const t = await api.get("/api/talk");
+  const setup = t.ai_ready ? "" : aiSetupCard();
+  const byLevel = [...LEVELS, ""].map((lv) => {
+    const list = t.scenarios.filter((s) => s.level === lv);
+    if (!list.length) return "";
+    return `<h3 class="lvhead">${lv ? `<span class="lv">${lv}</span>` : `<span class="lv">Libre</span>`}</h3>
+      <div class="scen-grid">${list.map((s) => `<button class="scen ${s.challenge ? "challenge" : ""} ${s.stars ? "played" : ""}" data-sc="${s.id}">
+        <span class="scen-ic">${s.icon}</span>
+        <span class="scen-t">${esc(s.title)}</span>
+        <span class="muted small">con ${esc(s.partner)}${s.voice === "ch" ? ` · <span class="swissflag">+</span>` : ""}</span>
+        <span class="stars" aria-label="${s.stars} de 3 estrellas">${[1, 2, 3].map((k) => `<i class="${k <= s.stars ? "on" : ""}">★</i>`).join("")}</span>
+        ${s.challenge ? `<span class="chip small tag">💪 Reto</span>` : ""}</button>`).join("")}</div>`;
+  }).join("");
+  mount("hablar", `${head}${tabs}${setup}${voiceNote}
+    <p class="muted" style="margin:0 0 6px">Elige una escena. Habla con el micro 🎤 o escribe. Cada escena tiene misiones: cúmplelas para ganar las tres estrellas.</p>
+    ${byLevel}`);
+  $$("[data-sc]").forEach((b) => b.addEventListener("click", () => {
+    if (!t.ai_ready) { toast("Primero activa la IA gratuita (abajo tienes los pasos)."); $("#aisetup")?.scrollIntoView({ behavior: "smooth" }); return; }
+    new Talk(t.scenarios.find((s) => s.id === b.dataset.sc)).open();
+  }));
+}
+
+function aiSetupCard() {
+  return `<section class="card aisetup" id="aisetup"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Activa tu compañera de conversación · gratis</h2><span class="chip">3 minutos</span></div>
+    <p class="muted">La conversación usa una IA gratuita. La más sencilla es Google Gemini: solo necesitas tu cuenta de Google, sin tarjeta.</p>
+    <ol class="steps"><li>Entra en <b>aistudio.google.com</b> con tu cuenta de Google.</li>
+      <li>Pulsa <b>Get API key</b> → <b>Create API key</b> y copia la clave.</li>
+      <li>Pégala en <b>Ajustes → Conversación con IA</b> y pulsa <b>Guardar y probar</b>.</li></ol>
+    <a class="btn primary" href="#/ajustes/ia">Ir a Ajustes</a></section>`;
+}
+
+class Talk {
+  constructor(sc) {
+    this.sc = sc;
+    this.msgs = [];           // {role, text, es, correction}
+    this.done = new Set();
+    this.hints = [];
+    this.call = S.settings.call_mode !== false;
+    this.t0 = Date.now();
+    this.busy = false;
+    this.ended = false;
+    this.voice = { voice: sc.azure_voice, g: sc.g, swiss: false };
+  }
+
+  open() {
+    const sc = this.sc;
+    this.el = document.createElement("div");
+    this.el.className = "focus talk";
+    this.el.setAttribute("role", "dialog");
+    this.el.innerHTML = `
+      <header class="ftop">
+        <button class="icon-btn" id="quit" title="Terminar (Esc)" aria-label="Terminar">✕</button>
+        <div class="missions" id="missions"></div>
+        <button class="chip ${this.call ? "on" : ""}" id="callmode" title="El micrófono se abre solo cuando el personaje termina de hablar">📞 Modo llamada</button>
+      </header>
+      <div class="stage talkstage" id="stage">
+        <div class="ex">
+          <div class="partner">
+            <div class="av big ${sc.voice === "ch" ? "ch" : sc.g}" id="avatar">${esc(sc.partner.replace(/^(Frau|Herr) /, "")[0])}</div>
+            <div><div class="pname">${esc(sc.partner)} ${sc.voice === "ch" ? `<span class="swissflag">+</span>` : ""}</div>
+              <div class="muted small">${sc.icon} ${esc(sc.title)}</div>
+              <div class="status" id="status">Conectando…</div></div>
+          </div>
+          <div class="chat" id="chat" aria-live="polite"></div>
+        </div>
+      </div>
+      <footer class="talkbar" id="bar">
+        <div class="hints hidden" id="hints"></div>
+        <div class="inputrow">
+          <button class="btn ghost" id="hint" title="Ideas para contestar">💡<span class="t"> Pista</span></button>
+          <input type="text" id="say" autocomplete="off" spellcheck="false" placeholder="Escribe en alemán… o pulsa el micro">
+          <button class="mic" id="mic" aria-label="Hablar">🎤</button>
+          <button class="btn" id="send">Enviar</button>
+        </div>
+      </footer>`;
+    document.body.appendChild(this.el);
+    document.body.style.overflow = "hidden";
+    $("#quit", this.el).addEventListener("click", () => this.finish());
+    $("#callmode", this.el).addEventListener("click", (e) => {
+      this.call = !this.call;
+      e.currentTarget.classList.toggle("on", this.call);
+      api.post("/api/settings", { call_mode: this.call }); S.settings.call_mode = this.call;
+      toast(this.call ? "Modo llamada: el micro se abre solo cuando termina de hablar." : "Modo llamada desactivado: pulsa 🎤 para hablar.");
+    });
+    $("#mic", this.el).addEventListener("click", () => (Mic.busy ? Mic.stop() : this.listen()));
+    $("#send", this.el).addEventListener("click", () => this.sendTyped());
+    $("#hint", this.el).addEventListener("click", () => this.toggleHints());
+    $("#say", this.el).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); this.sendTyped(); } });
+    this.keyh = (e) => {
+      if (e.key === "Escape") { this.finish(); return; }
+      if (e.key === " " && document.activeElement !== $("#say", this.el) && !this.ended) { e.preventDefault(); Mic.busy ? Mic.stop() : this.listen(); }
+    };
+    document.addEventListener("keydown", this.keyh);
+    if (!Mic.available()) $("#mic", this.el).classList.add("off");
+    this.drawMissions();
+    const [de, es] = sc.opener;
+    this.partnerSays({ reply: de, es, hints: [] });
+  }
+
+  close() {
+    Mic.cancel(); TTS.stop();
+    document.removeEventListener("keydown", this.keyh);
+    document.body.style.overflow = "";
+    this.el.remove();
+  }
+
+  status(t, cls = "") { const s = $("#status", this.el); if (s) { s.textContent = t; s.className = `status ${cls}`; } }
+
+  drawMissions(fresh = []) {
+    $("#missions", this.el).innerHTML = this.sc.tasks.map((t, i) => `<span class="mission ${this.done.has(i) ? "ok" : ""} ${fresh.includes(i) ? "fresh" : ""}"><i>${this.done.has(i) ? "✓" : i + 1}</i>${esc(t)}</span>`).join("");
+  }
+
+  bubble(m) {
+    const chat = $("#chat", this.el);
+    const b = document.createElement("div");
+    if (m.role === "assistant") {
+      b.className = "bubble them";
+      b.innerHTML = `<div class="de">${esc(m.text)}</div>${m.es ? `<div class="es hidden">${esc(m.es)}</div>` : ""}
+        <div class="tools"><button class="mini-btn" data-act="say" title="Repetir">🔊</button><button class="mini-btn" data-act="slow" title="Más despacio">🐢</button>${m.es ? `<button class="mini-btn" data-act="es" title="Traducción">ES</button>` : ""}</div>`;
+      b.querySelector('[data-act="say"]').addEventListener("click", () => this.speak(m.text));
+      b.querySelector('[data-act="slow"]').addEventListener("click", () => this.speak(m.text, true));
+      if (m.es) b.querySelector('[data-act="es"]').addEventListener("click", (e) => { b.querySelector(".es").classList.toggle("hidden"); e.currentTarget.classList.toggle("on"); });
+    } else {
+      b.className = "bubble me";
+      b.innerHTML = `<div class="de">${esc(m.text)}</div>`;
+    }
+    m.el = b;
+    chat.appendChild(b);
+    b.scrollIntoView({ behavior: calm() ? "auto" : "smooth", block: "end" });
+    return b;
+  }
+
+  addCorrection(m, c) {
+    m.correction = c;
+    if (!m.el) return;
+    const f = document.createElement("div");
+    f.className = "fix";
+    f.innerHTML = `<span class="lbl">✏️ Mejor así</span><div class="de">${esc(c.right)}</div>${c.why ? `<div class="small">${esc(c.why)}</div>` : ""}
+      <button class="mini-btn" title="Escuchar">🔊</button>`;
+    f.querySelector("button").addEventListener("click", () => this.speak(c.right));
+    m.el.appendChild(f);
+  }
+
+  speak(text, slow) { return TTS.speak(text, { ...this.voice, slow }); }
+
+  async partnerSays(r) {
+    const m = { role: "assistant", text: r.reply, es: r.es };
+    this.msgs.push(m);
+    this.bubble(m);
+    this.hints = r.hints || [];
+    this.drawHints();
+    $("#avatar", this.el).classList.add("talking");
+    this.status("Hablando…", "speaking");
+    await this.speak(r.reply);
+    if (!this.el.isConnected) return;
+    $("#avatar", this.el).classList.remove("talking");
+    if (r.end) return this.endedByPartner();
+    this.status(this.call && Mic.available() ? "Te escucho…" : "Tu turno", "you");
+    if (this.call && Mic.available()) this.listen();
+    else $("#say", this.el).focus();
+  }
+
+  async listen() {
+    if (this.busy || this.ended || Mic.busy) return;
+    TTS.stop();
+    const inp = $("#say", this.el), mic = $("#mic", this.el);
+    mic.classList.add("live");
+    this.status("Te escucho… habla cuando quieras", "listening");
+    inp.value = "";
+    try {
+      const text = await Mic.listen((t) => { inp.value = t; });
+      mic.classList.remove("live");
+      if (!this.el.isConnected) return;
+      if (text) { inp.value = ""; this.send(text); }
+      else { this.status("No te he oído. Pulsa 🎤 (o la barra espaciadora) para hablar.", "you"); }
+    } catch (e) {
+      mic.classList.remove("live");
+      this.status("Tu turno", "you");
+      toast(micError(e), 5000);
+      inp.focus();
+    }
+  }
+
+  sendTyped() { const inp = $("#say", this.el); const t = inp.value.trim(); if (!t) return; inp.value = ""; Mic.cancel(); this.send(t); }
+
+  async send(text) {
+    if (this.busy || this.ended) return;
+    this.busy = true;
+    $("#hints", this.el).classList.add("hidden");
+    const mine = { role: "user", text };
+    this.msgs.push(mine);
+    this.bubble(mine);
+    const typing = document.createElement("div");
+    typing.className = "bubble them typing";
+    typing.innerHTML = "<i></i><i></i><i></i>";
+    $("#chat", this.el).appendChild(typing);
+    typing.scrollIntoView({ block: "end" });
+    this.status("Pensando…");
+    let r;
+    try {
+      r = await api.post("/api/talk/turn", { scenario: this.sc.id, messages: this.msgs.map(({ role, text: t }) => ({ role, text: t })) });
+    } catch (e) { r = { error: "No hay conexión con la app." }; }
+    typing.remove();
+    this.busy = false;
+    if (!this.el.isConnected) return;
+    if (r.error) {
+      this.msgs.pop(); mine.el.classList.add("failed");
+      const err = document.createElement("div");
+      err.className = "talk-error";
+      err.innerHTML = `${esc(r.error === "sin-ia" ? "Falta configurar la IA en Ajustes." : r.error)} <button class="btn small">Reintentar</button>`;
+      err.querySelector("button").addEventListener("click", () => { err.remove(); mine.el.remove(); this.send(text); });
+      $("#chat", this.el).appendChild(err);
+      this.status("Tu turno", "you");
+      return;
+    }
+    if (r.correction) this.addCorrection(mine, r.correction);
+    const fresh = (r.done || []).filter((d) => !this.done.has(d));
+    fresh.forEach((d) => this.done.add(d));
+    this.drawMissions(fresh);
+    if (fresh.length) {
+      Sound.combo(this.done.size * 2);
+      floatText($("#missions", this.el), this.done.size === this.sc.tasks.length ? "¡Todas las misiones! ⭐⭐⭐" : "Misión cumplida ✓");
+    }
+    this.partnerSays(r);
+  }
+
+  drawHints() {
+    const h = $("#hints", this.el);
+    h.innerHTML = this.hints.length ? this.hints.map((t) => `<button class="hint de" data-h="${esc(t)}">${esc(t)}</button>`).join("") : `<span class="muted small">Sin pistas por ahora. Prueba con una frase sencilla.</span>`;
+    $$("[data-h]", h).forEach((b) => b.addEventListener("click", () => { const i = $("#say", this.el); i.value = b.dataset.h; i.focus(); this.speak(b.dataset.h); }));
+  }
+
+  toggleHints() { $("#hints", this.el).classList.toggle("hidden"); }
+
+  endedByPartner() {
+    this.ended = true;
+    Mic.cancel();
+    this.status("La conversación ha terminado", "");
+    $("#bar", this.el).innerHTML = `<div class="inputrow" style="justify-content:center"><button class="btn primary big" id="fin">Ver resultado <span class="kbd">Enter</span></button></div>`;
+    $("#fin", this.el).addEventListener("click", () => this.finish());
+    $("#fin", this.el).focus();
+  }
+
+  async finish() {
+    if (this.finishing) return;
+    this.finishing = true;
+    Mic.cancel(); TTS.stop();
+    const turns = this.msgs.filter((m) => m.role === "user");
+    if (!turns.length) { this.close(); return; }
+    const seconds = Math.round((Date.now() - this.t0) / 1000);
+    const r = await api.post("/api/talk/finish", {
+      scenario: this.sc.id, done: [...this.done], seconds,
+      messages: this.msgs.map(({ role, text, es, correction }) => ({ role, text, es, correction })),
+    });
+    const fixes = turns.filter((m) => m.correction);
+    document.removeEventListener("keydown", this.keyh);
+    this.keyh = (e) => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); $("#back", this.el)?.click(); } };
+    document.addEventListener("keydown", this.keyh);
+    $("#missions", this.el).innerHTML = "";
+    $("#callmode", this.el).classList.add("hidden");
+    $("#bar", this.el).innerHTML = "";
+    $("#bar", this.el).className = "fb idle";
+    $("#stage", this.el).innerHTML = `<div class="ex breaker">
+      <div class="bigstars">${[1, 2, 3].map((k) => `<i class="${k <= r.stars ? "on" : ""}" style="animation-delay:${k * 0.18}s">★</i>`).join("")}</div>
+      <h1>${r.stars === 3 ? "¡Misión completa!" : "¡Bien hablado!"}</h1>
+      <p class="muted">${r.turns} ${r.turns === 1 ? "mensaje" : "mensajes"} · ${r.done} de ${r.total} misiones · ${r.turns - r.corrections} sin correcciones</p>
+      ${endStats(r)}
+      ${fixes.length ? `<div class="card fixlist"><h2>Para repasar</h2>${fixes.map((m) => `<div class="fixrow"><div class="muted"><s>${esc(m.correction.wrong || m.text)}</s></div><div class="de"><b>${esc(m.correction.right)}</b></div>${m.correction.why ? `<div class="small muted">${esc(m.correction.why)}</div>` : ""}</div>`).join("")}
+        <button class="btn" id="savefix">📝 Guardar en mis apuntes</button></div>` : `<p class="tip" style="text-align:left">✨ Ninguna corrección en esta conversación. ¡Muy bien!</p>`}
+      <div class="row" style="justify-content:center;margin-top:18px"><button class="btn" id="again">Otra vez</button><button class="btn primary big" id="back">Volver <span class="kbd">Enter</span></button></div>
+    </div>`;
+    celebrate(r, r.stars >= 2);
+    $("#back", this.el).addEventListener("click", () => { this.close(); route(); });
+    $("#again", this.el).addEventListener("click", () => { this.close(); new Talk(this.sc).open(); });
+    $("#savefix", this.el)?.addEventListener("click", async (e) => {
+      const body = fixes.map((m) => `✗ ${m.correction.wrong || m.text}\n✓ ${m.correction.right}${m.correction.why ? `\n   ${m.correction.why}` : ""}`).join("\n\n");
+      await api.post("/api/notes", { title: `${this.sc.icon} ${this.sc.title} · ${new Date().toLocaleDateString("es-ES")}`, body, color: "amber" });
+      e.currentTarget.disabled = true; e.currentTarget.textContent = "✓ Guardado en Apuntes → Mis apuntes";
+    });
+  }
+}
+
+// ---------------------------------------------------------------------- audios de escucha
+async function viewListen(top) {
+  const L = await api.get("/api/listen");
+  mount("hablar", `${top}
+    ${L.ai_ready ? `<section class="card newaudio"><h2 style="margin:0 0 6px">Crear un audio nuevo</h2>
+      <p class="muted" style="margin:0 0 12px">La IA escribe un diálogo a tu nivel y lo leen dos voces distintas. Luego respondes a tres preguntas.</p>
+      <div class="row"><input type="text" id="topic" placeholder="Tema (por ejemplo: en la farmacia)" style="flex:1;min-width:220px">
+        <div class="choices" style="margin:0">${LEVELS.map((l) => `<button class="chip ${l === L.level ? "on" : ""}" data-lv="${l}">${l}</button>`).join("")}</div>
+        <button class="btn primary" id="create">✨ Crear audio</button></div>
+      <div class="row" style="margin-top:10px">${L.topics.map((t) => `<button class="chip small" data-topic="${esc(t)}">${esc(t)}</button>`).join("")}</div></section>`
+      : `<section class="card" style="margin-bottom:16px"><b>✨ ¿Quieres audios nuevos sobre cualquier tema?</b> <span class="muted">Activa la IA gratuita en <a href="#/ajustes/ia">Ajustes</a>. Mientras, aquí tienes audios ya preparados.</span></section>`}
+    <h3 style="margin:22px 0 10px">Tus audios</h3>
+    <div class="grid g3">${L.items.map((i) => `<button class="tile audio-tile" data-lid="${i.id}"><span class="ic">🎧</span><span class="t de">${esc(i.title)}</span><span class="muted small">${esc(i.title_es || "")}</span>
+      <span class="meta"><span class="lv">${i.level}</span><span>${i.best == null ? "sin escuchar" : `mejor: ${i.best} %`}</span></span></button>`).join("")}</div>`);
+  let level = L.level;
+  $$("[data-lv]").forEach((b) => b.addEventListener("click", () => { level = b.dataset.lv; $$("[data-lv]").forEach((x) => x.classList.toggle("on", x === b)); }));
+  $$("[data-topic]").forEach((b) => b.addEventListener("click", () => { $("#topic").value = b.dataset.topic; }));
+  $$("[data-lid]").forEach((b) => b.addEventListener("click", async () => new Listening(await api.get(`/api/listen/item?id=${encodeURIComponent(b.dataset.lid)}`)).open()));
+  $("#create")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.innerHTML = `<span class="spin"></span> Escribiendo el diálogo…`;
+    const r = await api.post("/api/listen/new", { topic: $("#topic").value, level });
+    btn.disabled = false; btn.textContent = "✨ Crear audio";
+    if (r.error) { toast(r.error === "sin-ia" ? "Falta configurar la IA." : r.error, 5000); return; }
+    new Listening(r).open();
+  });
+}
+
+class Listening {
+  constructor(d) { this.d = d; this.playing = false; this.showText = false; this.showEs = false; this.slow = false; this.t0 = Date.now(); }
+
+  open() {
+    this.el = document.createElement("div");
+    this.el.className = "focus listen";
+    this.el.setAttribute("role", "dialog");
+    this.el.innerHTML = `<header class="ftop"><button class="icon-btn" id="quit" aria-label="Salir">✕</button><div class="muted">🎧 Escucha</div><span class="lv">${this.d.level}</span></header>
+      <div class="stage" id="stage"></div><footer class="fb idle" id="fb"></footer>`;
+    document.body.appendChild(this.el);
+    document.body.style.overflow = "hidden";
+    $("#quit", this.el).addEventListener("click", () => this.close());
+    this.keyh = (e) => {
+      if (e.key === "Escape") return this.close();
+      if (this.mode === "player" && e.key === " ") { e.preventDefault(); this.toggle(); }
+      if (this.mode === "quiz") { const n = Number(e.key); if (n >= 1) $$(".opt", this.el)[n - 1]?.click(); if (e.key === "Enter") $("#next", this.el)?.click(); }
+      if (this.mode === "end" && e.key === "Enter") $("#back", this.el)?.click();
+    };
+    document.addEventListener("keydown", this.keyh);
+    this.player();
+  }
+
+  close() { this.playing = false; TTS.stop(); document.removeEventListener("keydown", this.keyh); document.body.style.overflow = ""; this.el.remove(); route(); }
+
+  player() {
+    this.mode = "player";
+    const d = this.d, sp = d.speakers;
+    $("#stage", this.el).innerHTML = `<div class="ex">
+      <div class="prompt listen-head">
+        <div class="duo"><span class="av ${sp.A.g}">${esc(sp.A.name[0])}</span><span class="av ${sp.B.g}">${esc(sp.B.name[0])}</span></div>
+        <div class="word de mid">${esc(d.title)}</div><div class="sub">${esc(d.title_es || "")} · ${esc(sp.A.name)} y ${esc(sp.B.name)}</div>
+        <div class="audio-row" style="margin-top:18px"><button class="play" id="play" aria-label="Reproducir">▶</button></div>
+        <div class="row" style="justify-content:center;margin-top:14px">
+          <button class="chip" id="slow">🐢 Despacio</button><button class="chip" id="txt">📝 Ver texto</button><button class="chip" id="tr">ES Traducción</button>
+          ${TTS.natural() ? `<a class="chip" href="/api/listen/mp3?id=${encodeURIComponent(d.id)}" download>⬇ MP3</a>` : ""}</div>
+      </div>
+      <div class="lines ${this.showText ? "" : "masked"}" id="lines">${d.lines.map(([s, de, es], k) => `<div class="line ${s}" data-k="${k}"><span class="who av ${sp[s].g}">${esc(sp[s].name[0])}</span>
+        <div><div class="de">${esc(de)}</div><div class="es ${this.showEs ? "" : "hidden"}">${esc(es)}</div></div><button class="mini-btn" data-line="${k}" aria-label="Escuchar esta frase">🔊</button></div>`).join("")}</div>
+      ${d.vocab && d.vocab.length ? `<div class="vocab">${d.vocab.map(([de, es]) => `<span class="chip"><b class="de">${esc(de)}</b> · ${esc(es)}</span>`).join("")}</div>` : ""}
+      <div class="row" style="justify-content:center;margin-top:22px"><button class="btn primary big" id="quiz">Responder preguntas · ${d.questions.length}</button></div>
+    </div>`;
+    $("#play", this.el).addEventListener("click", () => this.toggle());
+    $("#slow", this.el).addEventListener("click", (e) => { this.slow = !this.slow; e.currentTarget.classList.toggle("on", this.slow); });
+    $("#txt", this.el).addEventListener("click", (e) => { this.showText = !this.showText; e.currentTarget.classList.toggle("on", this.showText); $("#lines", this.el).classList.toggle("masked", !this.showText); });
+    $("#tr", this.el).addEventListener("click", (e) => { this.showEs = !this.showEs; e.currentTarget.classList.toggle("on", this.showEs); $$(".line .es", this.el).forEach((x) => x.classList.toggle("hidden", !this.showEs)); });
+    $$("[data-line]", this.el).forEach((b) => b.addEventListener("click", () => { this.playing = false; this.say(Number(b.dataset.line)); }));
+    $("#quiz", this.el).addEventListener("click", () => { this.playing = false; TTS.stop(); this.quiz(0, 0); });
+    setTimeout(() => this.toggle(), 400);
+  }
+
+  say(k) {
+    const [s, de] = this.d.lines[k];
+    const sp = this.d.speakers[s];
+    $$(".line", this.el).forEach((l) => l.classList.toggle("now", Number(l.dataset.k) === k));
+    return TTS.speak(de, { voice: sp.voice, g: sp.g, slow: this.slow });
+  }
+
+  async toggle() {
+    const btn = $("#play", this.el);
+    if (this.playing) { this.playing = false; TTS.stop(); btn.textContent = "▶"; return; }
+    this.playing = true; btn.textContent = "❚❚";
+    for (let k = 0; k < this.d.lines.length && this.playing; k++) {
+      await this.say(k);
+      if (!this.playing) break;
+      await new Promise((r) => setTimeout(r, 380));
+    }
+    if (!this.el.isConnected) return;
+    this.playing = false;
+    btn.textContent = "▶";
+    $$(".line", this.el).forEach((l) => l.classList.remove("now"));
+  }
+
+  quiz(i, ok) {
+    this.mode = "quiz";
+    const qs = this.d.questions;
+    if (i >= qs.length) return this.end(ok);
+    const [q, opts, ans] = qs[i];
+    const fb = $("#fb", this.el);
+    fb.className = "fb idle"; fb.innerHTML = "";
+    $("#stage", this.el).innerHTML = `<div class="ex">
+      <div class="ex-kicker"><span>🎧 Pregunta ${i + 1} de ${qs.length}</span><button class="btn ghost small" id="replay">🔊 Volver a escuchar</button></div>
+      <div class="prompt"><div class="q">${esc(q)}</div></div>
+      <div class="options">${opts.map((o, k) => `<button class="opt" data-k="${k}"><span class="n">${k + 1}</span><span>${esc(o)}</span></button>`).join("")}</div></div>`;
+    $("#replay", this.el).addEventListener("click", async () => { this.playing = true; for (let k = 0; k < this.d.lines.length && this.playing; k++) await this.say(k); this.playing = false; });
+    $$(".opt", this.el).forEach((b) => b.addEventListener("click", () => {
+      if (fb.classList.contains("right") || fb.classList.contains("wrong")) return;
+      this.playing = false; TTS.stop();
+      const k = Number(b.dataset.k), right = k === ans;
+      $$(".opt", this.el).forEach((x, idx) => { x.disabled = true; if (idx === ans) x.classList.add("is-right"); if (idx === k && !right) x.classList.add("is-wrong"); });
+      right ? Sound.right() : Sound.wrong();
+      fb.className = `fb ${right ? "right" : "wrong"}`;
+      fb.innerHTML = `<div class="fb-inner"><div class="msg"><div class="badge">${right ? "✓" : "↻"}</div><div><div class="title">${right ? "¡Genau!" : "Casi"}</div>${right ? "" : `<div class="detail">Respuesta: <b>${esc(opts[ans])}</b></div>`}</div></div>
+        <div class="row"><button class="btn primary" id="next">Seguir <span class="kbd">Enter</span></button></div></div>`;
+      $("#next", fb).addEventListener("click", () => this.quiz(i + 1, ok + (right ? 1 : 0)));
+      $("#next", fb).focus();
+    }));
+  }
+
+  async end(ok) {
+    this.mode = "end";
+    const total = this.d.questions.length;
+    const r = await api.post("/api/listen/finish", { id: this.d.id, correct: ok, total, seconds: Math.round((Date.now() - this.t0) / 1000) });
+    $("#fb", this.el).className = "fb idle";
+    $("#stage", this.el).innerHTML = `<div class="ex breaker"><div class="trophy">🎧</div><h1>${ok === total ? "¡Lo has entendido todo!" : "¡Buen oído!"}</h1>
+      <p class="muted">${ok} de ${total} respuestas correctas</p>${endStats(r)}
+      <div class="row" style="justify-content:center;margin-top:18px"><button class="btn" id="again">Escuchar otra vez</button><button class="btn primary big" id="back">Volver <span class="kbd">Enter</span></button></div></div>`;
+    celebrate(r, ok === total);
+    $("#back", this.el).addEventListener("click", () => this.close());
+    $("#again", this.el).addEventListener("click", () => { this.t0 = Date.now(); this.player(); });
+  }
+}
+
+// ====================================================================== premios: rango, logros y tienda
+async function viewRewards() {
+  const g = await api.get("/api/game");
+  const rk = g.rank;
+  const got = g.achievements.filter((a) => a.got).length;
+  mount("premios", `<div class="view-head"><div><h1>Premios</h1><p class="muted">Tu rango, tus logros y la tienda de Brezeln.</p></div></div>
+    <div class="grid g3">
+      <div class="card rankcard"><p class="muted" style="margin:0">Rango</p><div class="rankbadge">${rk.n}</div><h2 style="margin:6px 0 2px">${esc(rk.title)}</h2>
+        <div class="bar" style="margin:10px 0 6px"><i style="width:${Math.round(((g.xp_total - rk.floor) / (rk.next - rk.floor)) * 100)}%"></i></div>
+        <p class="small muted" style="margin:0">${g.xp_total} XP · faltan ${rk.next - g.xp_total} para el rango ${rk.n + 1}</p></div>
+      <div class="card"><p class="muted" style="margin:0">Racha</p><div class="stat"><div class="v">🔥 ${g.streak}</div></div>${weekDots(g.week)}
+        <p class="small muted" style="margin:12px 0 0">🧊 ${g.freezes} de 2 protectores. Además, un día de descanso cada semana no rompe la racha.</p></div>
+      <div class="card"><p class="muted" style="margin:0">Brezeln</p><div class="stat"><div class="v">🥨 ${g.gems}</div></div>
+        <p class="small muted" style="margin:8px 0 0">Sesión completa +5 · audio +3 · conversación +5 · misión +10 a 15 · cofre +${g.chest.gems} · logro +25</p></div>
+    </div>
+    <h3 style="margin:28px 0 12px">Tienda</h3>
+    <div class="grid g2">${g.shop.map((it) => `<div class="card shopitem"><span class="ic">${it.icon}</span><div style="flex:1"><b>${esc(it.title)}</b><br><span class="muted small">${esc(it.desc)}</span></div>
+      <button class="btn ${g.gems >= it.price ? "primary" : ""}" data-buy="${it.id}">🥨 ${it.price}</button></div>`).join("")}</div>
+    <h3 style="margin:28px 0 12px">Logros · ${got} de ${g.achievements.length}</h3>
+    <div class="badges">${g.achievements.map((a) => `<div class="badgecard ${a.got ? "got" : ""}" title="${esc(a.desc)}"><span class="medal">${a.icon}</span><b>${esc(a.title)}</b><span class="small muted">${esc(a.desc)}</span>
+      ${a.got ? `<span class="small when">${new Date(a.ts * 1000).toLocaleDateString("es-ES")}</span>` : ""}</div>`).join("")}</div>
+    <div style="margin-top:28px">${questsCard(g)}</div>`, g);
+  $$("[data-buy]").forEach((b) => b.addEventListener("click", async () => {
+    const r = await api.post("/api/shop", { item: b.dataset.buy });
+    if (!r.ok) { toast(r.error, 3800); return; }
+    Sound.reward();
+    toast(b.dataset.buy === "freeze" ? "🧊 Protector de racha listo. Se usará solo si lo necesitas." : "⚡ ¡Doble XP durante 15 minutos!");
+    viewRewards();
+  }));
+  showRewards(g.rewards);
 }
 
 // ====================================================================== apuntes
@@ -927,7 +1706,7 @@ async function viewProgress() {
   const first = new Date(p.heat[0].day + "T12:00:00");
   const pad = (first.getDay() + 6) % 7;
   const cells = Array(pad).fill(`<i style="visibility:hidden"></i>`).concat(p.heat.map((d) => `<i class="${lvl(d.n)}" title="${d.day}: ${d.n} ejercicios"></i>`));
-  const skills = Object.entries(p.skills).filter(([k]) => k !== "speak");
+  const skills = Object.entries(p.skills).filter(([k, v]) => k !== "speak" || v.n);
   mount("progreso", `<div class="view-head"><div><h1>Progreso</h1><p class="muted">Nivel actual: <b>${p.level}</b> · ${p.minutes} min de estudio en total</p></div>
     <button class="btn primary" id="weak">🎯 Practicar puntos débiles</button></div>
     <div class="grid g3">
@@ -940,7 +1719,7 @@ async function viewProgress() {
       <div class="card"><h2>Por destreza</h2>${skills.map(([k, s]) => `<div class="skill"><span>${SKILL_ICON[k]} ${s.label}</span>
         <div class="bar"><i style="width:${s.accuracy == null ? 0 : Math.round(s.accuracy * 100)}%"></i></div>
         <span class="small muted">${s.accuracy == null ? "—" : Math.round(s.accuracy * 100) + " %"}</span><span class="lv lvx">${s.level || "—"}</span></div>`).join("")}
-        <p class="small muted">El nivel por destreza aparece cuando hay al menos 8 respuestas de ese nivel con un 70 % de aciertos. La pronunciación llega en la fase 2.</p></div>
+        <p class="small muted">El nivel por destreza aparece cuando hay al menos 8 respuestas de ese nivel con un 70 % de aciertos. «Conversación» mide los mensajes sin correcciones en tus charlas con la IA.</p></div>
     </div>
     <div class="grid g2" style="margin-top:16px">
       <div class="card"><h2>Lo que más te cuesta</h2>${p.weak.length ? p.weak.map((w) => `<div class="weak-row"><span class="de"><b class="${w.art === "pl" ? "pl" : w.art}">${esc(w.label)}</b> <span class="muted small">${esc(w.kind === "gram" ? "" : w.es)}</span></span><span class="muted small">${w.wrong} fallo${w.wrong > 1 ? "s" : ""}</span></div>`).join("") : `<p class="muted">Aún no hay datos suficientes. ¡Bien!</p>`}</div>
@@ -951,7 +1730,7 @@ async function viewProgress() {
 }
 
 // ====================================================================== ajustes
-async function viewSettings() {
+async function viewSettings(sub) {
   const s = await api.get("/api/settings");
   Object.assign(S.settings, s);
   const voices = S.voices;
@@ -987,6 +1766,12 @@ async function viewSettings() {
           <p class="small muted">Para mejorarla: Ajustes del Sistema → Accesibilidad → Contenido leído → Voz del sistema → Gestionar voces → Alemán → descarga las voces «premium» o «mejorada».</p>
         </details>
       </div>
+      ${aiCard(s)}
+      <div class="card stack"><h2>Juego</h2>
+        <div><label class="field">Meta diaria</label><div class="choices" style="margin:0">${[[20, "Relajada"], [50, "Normal"], [100, "Seria"], [150, "Intensa"]].map(([n, l]) => `<button class="chip ${Number(s.daily_goal) === n ? "on" : ""}" data-goal="${n}">${l} · ${n} XP</button>`).join("")}</div>
+          <p class="small muted">Una sesión de 30 minutos da unos 150 XP; una conversación, entre 50 y 150.</p></div>
+        <label class="row"><input type="checkbox" id="sound" ${s.sound !== false ? "checked" : ""}> Sonidos de acierto y premios</label>
+      </div>
       <div class="card stack"><h2>Tu sesión</h2>
         <div><label class="field">Duración: <span id="minv">${s.minutes}</span> min</label><input type="range" id="minutes" min="10" max="60" step="5" value="${s.minutes}"></div>
         <div><label class="field">Ejercicios por bloque</label><div class="choices" style="margin:0">${[5, 8, 12].map((n) => `<button class="chip ${Number(s.block_size) === n ? "on" : ""}" data-block="${n}">${n}</button>`).join("")}</div>
@@ -1011,6 +1796,10 @@ async function viewSettings() {
     </div>`);
 
   const save = async (d) => { await api.post("/api/settings", d); Object.assign(S.settings, d); };
+  bindAiCard(s, save);
+  $$("[data-goal]").forEach((b) => b.addEventListener("click", () => { save({ daily_goal: Number(b.dataset.goal) }); $$("[data-goal]").forEach((x) => x.classList.toggle("on", x === b)); refreshHud(); }));
+  $("#sound").addEventListener("change", (e) => { save({ sound: e.target.checked }).then(() => Sound.right()); });
+  if (sub === "ia") setTimeout(() => $("#ia")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   $("#minutes").addEventListener("input", (e) => { $("#minv").textContent = e.target.value; });
   $("#minutes").addEventListener("change", (e) => save({ minutes: Number(e.target.value) }));
   $$("[data-block]").forEach((b) => b.addEventListener("click", () => { save({ block_size: Number(b.dataset.block) }); $$("[data-block]").forEach((x) => x.classList.toggle("on", x === b)); }));
@@ -1069,6 +1858,86 @@ async function viewSettings() {
     const j = await r.json();
     toast(j.ok ? "Copia restaurada" : j.error, 4000);
     if (j.ok) { S.lib = null; boot(); }
+  });
+}
+
+// ---------------------------------------------------------------------- ajustes de la IA
+const AI_STEPS = {
+  gemini: `<ol class="steps"><li>Entra en <b>aistudio.google.com</b> con tu cuenta de Google.</li>
+    <li>Pulsa <b>Get API key</b> → <b>Create API key</b>. Es gratis y no pide tarjeta.</li>
+    <li>Copia la clave, pégala aquí y pulsa <b>Guardar y probar</b>.</li></ol>
+    <p class="small muted">En el plan gratuito, Google puede usar las conversaciones para mejorar sus productos: no compartas datos personales.</p>`,
+  groq: `<ol class="steps"><li>Crea una cuenta gratuita en <b>console.groq.com</b>.</li>
+    <li>Menú <b>API Keys</b> → <b>Create API Key</b>.</li><li>Copia la clave, pégala aquí y pulsa <b>Guardar y probar</b>.</li></ol>`,
+  ollama: `<ol class="steps"><li>Descarga <b>Ollama</b> (gratis) desde <b>ollama.com</b> e instálalo.</li>
+    <li>Abre Terminal y escribe: <code>ollama pull gemma3:4b</code> (unos 3 GB, solo una vez).</li>
+    <li>Deja Ollama abierto y pulsa <b>Guardar y probar</b>.</li></ol>
+    <p class="small muted">Funciona sin internet y nada sale de tu Mac. Necesita un Mac con chip Apple y al menos 8 GB de memoria; es algo más lento.</p>`,
+  custom: `<p class="small muted">Cualquier servicio compatible con la API de OpenAI (por ejemplo LM Studio en tu Mac). Escribe la dirección completa terminada en <code>/chat/completions</code>.</p>`,
+};
+
+function aiCard(s) {
+  const p = s.ai_provider || "gemini";
+  const pr = s.ai_providers[p];
+  const fem = s.azure_voices.filter((v) => !v[0].startsWith("de-CH") && /mujer/.test(v[1]));
+  const mal = s.azure_voices.filter((v) => !v[0].startsWith("de-CH") && /hombre/.test(v[1]));
+  return `<div class="card stack voicecard" id="ia"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Conversación con IA</h2>
+      <span class="chip ${s.ai_ready ? "on" : ""}">${s.ai_ready ? `✓ Activa · ${esc(pr.label)}` : "Sin configurar"}</span></div>
+    <p class="muted" style="margin:0">Los personajes de «Hablar» son una IA. Elige un servicio gratuito:</p>
+    <div class="choices" style="margin:0">${Object.entries(s.ai_providers).map(([k, v]) => `<button class="chip ${k === p ? "on" : ""}" data-prov="${k}">${esc(v.label)} <span class="small">· ${esc(v.note)}</span></button>`).join("")}</div>
+    <div class="grid g2">
+      <div>${AI_STEPS[p] || ""}</div>
+      <div>
+        ${pr.key ? `<label class="field">Clave ${s.ai_keys_set[p] ? `<span class="chip small">guardada ✓</span>` : ""}</label>
+          <input type="password" id="aikey" placeholder="${s.ai_keys_set[p] ? "•••••••• (déjala vacía para no cambiarla)" : "Pega la clave aquí"}">` : ""}
+        ${p === "custom" ? `<label class="field" style="margin-top:10px">Dirección</label><input type="text" id="aiurl" value="${esc(s.ai_url || "")}" placeholder="http://127.0.0.1:1234/v1/chat/completions">` : ""}
+        <label class="field" style="margin-top:10px">Modelo <span class="muted small">(opcional)</span></label>
+        <input type="text" id="aimodel" value="${esc(s.ai_model || "")}" placeholder="${esc(pr.model || "nombre del modelo")}">
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="aisave">Guardar y probar</button>${pr.key && s.ai_keys_set[p] ? `<button class="btn ghost" id="aiclear">Quitar clave</button>` : ""}<span class="small muted" id="aistat"></span></div>
+      </div>
+    </div>
+    <div class="grid g2">
+      <div class="stack">
+        <label class="row"><input type="checkbox" id="aicorr" ${s.ai_corrections !== false ? "checked" : ""}> Corregir mis errores durante la conversación</label>
+        <label class="row"><input type="checkbox" id="aicall" ${s.call_mode !== false ? "checked" : ""}> Modo llamada: el micro se abre solo cuando el personaje termina de hablar</label>
+      </div>
+      <div><label class="field">Voces de los personajes (Azure)</label>
+        <div class="row" style="flex-wrap:nowrap"><select id="tvf">${fem.map((v) => `<option value="${v[0]}" ${v[0] === s.talk_voice_f ? "selected" : ""}>${esc(v[1])}</option>`).join("")}</select>
+        <select id="tvm">${mal.map((v) => `<option value="${v[0]}" ${v[0] === s.talk_voice_m ? "selected" : ""}>${esc(v[1])}</option>`).join("")}</select></div>
+        <p class="small muted">Los personajes de Basilea usan las voces suizas (Leni y Jan). Sin Azure se usan las voces del Mac.</p></div>
+    </div>
+  </div>`;
+}
+
+function bindAiCard(s, save) {
+  $$("[data-prov]").forEach((b) => b.addEventListener("click", async () => {
+    await save({ ai_provider: b.dataset.prov, ai_model: "" });
+    viewSettings("ia");
+  }));
+  $("#aicorr").addEventListener("change", (e) => save({ ai_corrections: e.target.checked }));
+  $("#aicall").addEventListener("change", (e) => save({ call_mode: e.target.checked }));
+  $("#tvf").addEventListener("change", (e) => save({ talk_voice_f: e.target.value }));
+  $("#tvm").addEventListener("change", (e) => save({ talk_voice_m: e.target.value }));
+  $("#aiclear")?.addEventListener("click", async () => { await api.post("/api/settings", { ai_key_clear: true }); toast("Clave eliminada"); viewSettings("ia"); });
+  $("#aisave").addEventListener("click", async (e) => {
+    const d = { ai_provider: s.ai_provider || "gemini", ai_model: $("#aimodel").value.trim() };
+    const k = $("#aikey") && $("#aikey").value.trim();
+    if (k) d.ai_key = k;
+    if ($("#aiurl")) d.ai_url = $("#aiurl").value.trim();
+    await api.post("/api/settings", d);
+    const btn = e.currentTarget;
+    btn.disabled = true; $("#aistat").textContent = "Probando…";
+    const r = await api.post("/api/talk/test");
+    btn.disabled = false;
+    if (r.ok) {
+      $("#aistat").textContent = "";
+      Sound.reward();
+      toast(`✓ La IA funciona (${r.model}). ¡Ya puedes hablar!`, 3500);
+      viewSettings("ia");
+    } else {
+      $("#aistat").textContent = "";
+      toast(r.error, 6000);
+    }
   });
 }
 

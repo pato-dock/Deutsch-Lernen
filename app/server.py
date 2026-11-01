@@ -28,14 +28,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+import ai  # noqa: E402
 import fsrs  # noqa: E402
 from content import CONTENT, LEVELS, SKILLS  # noqa: E402
-from store import Store  # noqa: E402
+from store import PRIVATE, Store  # noqa: E402
 
-VERSION = "1.2 · fase 1"
+VERSION = "1.3 · conversación"
 STATIC = os.path.join(HERE, "static")
 STORE = None
 LAST_PING = time.time()
+GAME_LOCK = threading.RLock()
 AZURE_VOICES = [
     ("de-DE-SeraphinaMultilingualNeural", "Seraphina · Alemania · mujer · la más natural"),
     ("de-DE-FlorianMultilingualNeural", "Florian · Alemania · hombre · la más natural"),
@@ -291,11 +293,20 @@ def finish(data):
     total = int(data.get("total") or 0)
     correct = int(data.get("correct") or 0)
     seconds = int(data.get("seconds") or 0)
-    xp = correct * 10 + (total - correct) * 2 + (50 if data.get("complete") else 0)
+    combo = max(0, int(data.get("max_combo") or 0))
+    complete = bool(data.get("complete"))
+    xp = correct * 10 + (total - correct) * 2 + (50 if complete else 0) + min(combo, 20)
+    xp, boosted = boost(xp)
+    if combo:
+        STORE.log_event(today(), "combo", data.get("kind", "daily"), combo)
     STORE.execute("INSERT INTO sessions (day, started, finished, seconds, total, correct, xp, kind) VALUES (?,?,?,?,?,?,?,?)",
                   (today(), time.time() - seconds, time.time(), seconds, total, correct, xp, data.get("kind", "daily")))
+    gems = 5 if complete and total else 0
+    add_gems(gems)
     msg = maybe_level_up()
-    return {"ok": True, "xp": xp, "streak": streak(), "level_up": msg}
+    rewards = settle()
+    return {"ok": True, "xp": xp, "boosted": boosted, "gems": gems,
+            "streak": streak(), "level_up": msg, "rewards": rewards, "game": game_state()}
 
 
 def maybe_level_up():
@@ -316,26 +327,35 @@ def maybe_level_up():
 
 # ====================================================================== estadísticas
 def active_days():
+    """Ejercicios por día. Una conversación o un audio cuentan como 10 ejercicios."""
     rows = STORE.query("SELECT day, COUNT(*) AS n FROM answers GROUP BY day")
-    return {r["day"]: r["n"] for r in rows}
+    out = {r["day"]: r["n"] for r in rows}
+    for r in STORE.query("SELECT day, COUNT(*) AS n FROM sessions WHERE kind IN ('talk', 'listen') GROUP BY day"):
+        out[r["day"]] = out.get(r["day"], 0) + 10 * r["n"]
+    return out
 
 
-def streak():
-    """Racha flexible: un día sin practicar cada 7 días no la rompe."""
+def streak(extra_frozen=()):
+    """Racha flexible: un día sin practicar cada 7 días no la rompe, y los días
+    cubiertos por un protector de racha tampoco. Hoy no la rompe hasta que acaba."""
     days = active_days()
+    frozen = set(STORE.settings().get("frozen_days") or []) | set(extra_frozen)
 
     def active(o):
         return days.get(day_str(o), 0) >= 10
 
     o = 0 if active(0) else 1
-    count, last_freeze = 0, None
+    count, last_flex = 0, None
     while o < 400:
         if active(o):
             count += 1
             o += 1
             continue
-        if count > 0 and (last_freeze is None or o - last_freeze >= 7) and active(o + 1):
-            last_freeze = o
+        if day_str(o) in frozen:
+            o += 1
+            continue
+        if (last_flex is None or o - last_flex >= 7) and active(o + 1):
+            last_flex = o
             o += 1
             continue
         break
@@ -387,6 +407,9 @@ def progress():
             if len(sub) >= 8 and sum(r["correct"] for r in sub) / len(sub) >= 0.7:
                 est = lv
         skills[sk] = {"label": label, "accuracy": acc, "n": len(rows), "level": est}
+    conv = STORE.query("SELECT COALESCE(SUM(turns),0) AS t, COALESCE(SUM(ok_turns),0) AS ok FROM conversations")[0]
+    if conv["t"]:
+        skills["speak"] = {"label": "Conversación", "accuracy": conv["ok"] / conv["t"], "n": conv["t"], "level": None}
     vocab = [i for i in cards if i.startswith("v:")]
     learned = [i for i in vocab if cards[i]["state"] == fsrs.REVIEW and cards[i]["reps"] >= 2]
     mastered = [i for i in vocab if cards[i]["s"] >= 21]
@@ -501,17 +524,29 @@ def azure_tts(text, voice, rate):
         with open(path, "rb") as f:
             return f.read(), None
     lang = "-".join(voice.split("-")[:2])
-    esc = (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
     pct = round((rate - 1) * 100)
     ssml = (f"<speak version='1.0' xml:lang='{lang}'><voice name='{voice}'>"
-            f"<prosody rate='{pct:+d}%'>{esc}</prosody></voice></speak>")
+            f"<prosody rate='{pct:+d}%'>{xml_esc(text)}</prosody></voice></speak>")
+    return azure_request(ssml, path)
+
+
+def xml_esc(text):
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def azure_request(ssml, path, timeout=15):
+    """Envía SSML a Azure y guarda el MP3 en `path` (caché)."""
+    s = STORE.settings()
+    key, region = s.get("azure_key"), (s.get("azure_region") or "westeurope").strip()
+    if not key:
+        return None, "sin-clave"
     req = urllib.request.Request(
         os.environ.get("DL_AZURE_URL") or f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1",
         data=ssml.encode("utf-8"),
         headers={"Ocp-Apim-Subscription-Key": key, "Content-Type": "application/ssml+xml",
                  "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3", "User-Agent": "DeutschLernen"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             audio = r.read()
     except urllib.error.HTTPError as e:
         return None, f"azure-{e.code}"
@@ -520,6 +555,28 @@ def azure_tts(text, voice, rate):
     with open(path, "wb") as f:
         f.write(audio)
     return audio, None
+
+
+def azure_stt(wav):
+    """Reconocimiento de voz de Azure (incluido en el plan gratuito: 5 h al mes)."""
+    s = STORE.settings()
+    key, region = s.get("azure_key"), (s.get("azure_region") or "westeurope").strip()
+    if not key:
+        return {"error": "sin-clave"}
+    url = (os.environ.get("DL_AZURE_STT_URL") or
+           f"https://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1")
+    req = urllib.request.Request(
+        url + "?language=de-DE&format=simple", data=wav,
+        headers={"Ocp-Apim-Subscription-Key": key, "Content-Type": "audio/wav; codecs=audio/pcm; samplerate=16000",
+                 "Accept": "application/json", "User-Agent": "DeutschLernen"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            d = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return {"error": f"azure-{e.code}"}
+    except Exception as e:
+        return {"error": f"red: {e.__class__.__name__}"}
+    return {"text": d.get("DisplayText", "") if d.get("RecognitionStatus") == "Success" else ""}
 
 
 PREFETCH = {"running": False, "done": 0, "total": 0, "errors": 0, "last_error": None}
@@ -569,6 +626,392 @@ def prefetch_job():
             time.sleep(3.2)
         PREFETCH["done"] += 1
     PREFETCH["running"] = False
+
+
+# ====================================================================== juego: XP, rangos, misiones, logros, tienda
+RANKS = ["Neugierig", "Mutig", "Entdeckerin", "Plaudertasche", "Wortjägerin", "Satzbauerin",
+         "Grammatikheldin", "Sprachtalent", "Basel-Profi", "Meisterin"]
+QUESTS = {  # id: (icono, texto, objetivo, recompensa en brezeln)
+    "xp": ("⚡", "Consigue {n} XP", None, 10),
+    "answers": ("✅", "Responde {n} ejercicios", 30, 10),
+    "combo": ("🔥", "Encadena {n} aciertos seguidos", 8, 10),
+    "talk": ("🗣️", "Termina una conversación", 1, 15),
+    "listen": ("🎧", "Escucha un audio y responde", 1, 10),
+    "new": ("✨", "Aprende {n} palabras nuevas", 5, 10),
+}
+CHEST = 20
+ACHIEVEMENTS = [  # id, icono, nombre, descripción, (estadística, mínimo)
+    ("first", "🌱", "Erster Schritt", "Completa tu primera sesión", ("sessions", 1)),
+    ("streak3", "🔥", "Drei am Stück", "3 días de racha", ("streak", 3)),
+    ("streak7", "🔥", "Eine ganze Woche", "7 días de racha", ("streak", 7)),
+    ("streak30", "🏔️", "Ein Monat", "30 días de racha", ("streak", 30)),
+    ("words50", "🧠", "50 Wörter", "Aprende 50 palabras", ("words", 50)),
+    ("words200", "📚", "200 Wörter", "Aprende 200 palabras", ("words", 200)),
+    ("talk1", "🗣️", "Erstes Gespräch", "Termina tu primera conversación", ("talk", 1)),
+    ("talk10", "☕", "Plaudertasche", "Termina 10 conversaciones", ("talk", 10)),
+    ("mission", "🎯", "Mission erfüllt", "Cumple todas las misiones de una conversación", ("tasks_all", 1)),
+    ("listen1", "🎧", "Ganz Ohr", "Escucha tu primer audio", ("listen", 1)),
+    ("listen10", "📻", "Hörprofi", "Escucha 10 audios", ("listen", 10)),
+    ("perfect", "💎", "Fehlerfrei", "Una sesión sin fallos (mínimo 10 ejercicios)", ("perfect", 1)),
+    ("combo15", "⚡", "Auf Hochtouren", "15 aciertos seguidos", ("combo", 15)),
+    ("xp1000", "⭐", "Tausend", "Consigue 1000 XP", ("xp", 1000)),
+    ("xp5000", "🌟", "Fünftausend", "Consigue 5000 XP", ("xp", 5000)),
+]
+ACH_GEMS = 25
+SHOP = [
+    {"id": "freeze", "icon": "🧊", "title": "Protector de racha", "price": 50,
+     "desc": "Si un día no puedes practicar, tu racha sigue viva. Se usa sola. Puedes tener 2."},
+    {"id": "boost", "icon": "⚡", "title": "Doble XP · 15 min", "price": 30,
+     "desc": "Todo lo que hagas en los próximos 15 minutos cuenta el doble."},
+]
+
+
+def add_gems(n):
+    if n:
+        with GAME_LOCK:
+            STORE.set_settings({"gems": int(STORE.settings().get("gems") or 0) + int(n)})
+
+
+def boost(xp):
+    if float(STORE.settings().get("xp_boost_until") or 0) > time.time():
+        return xp * 2, True
+    return xp, False
+
+
+def rank_info(total):
+    n = 1
+    while 50 * n * (n + 1) <= total:
+        n += 1
+    return {"n": n, "title": RANKS[min(n - 1, len(RANKS) - 1)], "floor": 50 * (n - 1) * n, "next": 50 * n * (n + 1)}
+
+
+def xp_on(day):
+    return STORE.query("SELECT COALESCE(SUM(xp),0) AS xp FROM sessions WHERE day = ?", (day,))[0]["xp"]
+
+
+def quest_value(kind):
+    d = today()
+    if kind == "xp":
+        return xp_on(d)
+    if kind == "answers":
+        return STORE.query("SELECT COUNT(*) AS n FROM answers WHERE day = ? AND requeue = 0", (d,))[0]["n"]
+    if kind == "combo":
+        return STORE.query("SELECT COALESCE(MAX(value),0) AS n FROM events WHERE day = ? AND kind = 'combo'", (d,))[0]["n"]
+    if kind in ("talk", "listen"):
+        return STORE.query("SELECT COUNT(*) AS n FROM sessions WHERE day = ? AND kind = ?", (d, kind))[0]["n"]
+    if kind == "new":
+        t = time.localtime()
+        start = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
+        return STORE.query("SELECT COUNT(*) AS n FROM cards WHERE introduced >= ? AND item LIKE 'v:%'", (start,))[0]["n"]
+    return 0
+
+
+def quests_today():
+    goal = int(STORE.settings().get("daily_goal") or 50)
+    rnd = random.Random(today())
+    ids = ["xp"] + rnd.sample(["answers", "combo", "talk", "listen", "new"], 2)
+    claimed = {r["ref"] for r in STORE.query("SELECT ref FROM events WHERE day = ? AND kind = 'quest'", (today(),))}
+    out = []
+    for q in ids:
+        icon, text, target, reward = QUESTS[q]
+        target = goal if target is None else target
+        v = quest_value(q)
+        out.append({"id": q, "icon": icon, "title": text.format(n=target), "target": target,
+                    "value": min(v, target), "done": v >= target, "reward": reward, "claimed": q in claimed})
+    return out, "chest" in claimed
+
+
+def ach_stats():
+    ses = STORE.query("SELECT kind, total, correct FROM sessions")
+    cards = STORE.cards()
+    return {
+        "sessions": sum(1 for r in ses if r["kind"] not in ("talk", "listen") and r["total"]),
+        "perfect": sum(1 for r in ses if r["kind"] not in ("talk", "listen") and r["total"] >= 10 and r["correct"] >= r["total"]),
+        "talk": sum(1 for r in ses if r["kind"] == "talk"),
+        "listen": sum(1 for r in ses if r["kind"] == "listen"),
+        "streak": streak(),
+        "words": sum(1 for i, c in cards.items() if i.startswith("v:") and c["state"] == fsrs.REVIEW and c["reps"] >= 2),
+        "xp": STORE.query("SELECT COALESCE(SUM(xp),0) AS xp FROM sessions")[0]["xp"],
+        "combo": STORE.query("SELECT COALESCE(MAX(value),0) AS n FROM events WHERE kind = 'combo'")[0]["n"],
+        "tasks_all": STORE.query("SELECT COUNT(*) AS n FROM conversations WHERE tasks_total > 0 AND tasks_done >= tasks_total")[0]["n"],
+    }
+
+
+def settle():
+    """Entrega las recompensas pendientes (misiones del día, cofre y logros). Idempotente."""
+    with GAME_LOCK:
+        rewards = []
+        quests, chest = quests_today()
+        for q in quests:
+            if q["done"] and not q["claimed"]:
+                STORE.log_event(today(), "quest", q["id"], q["reward"])
+                add_gems(q["reward"])
+                rewards.append({"icon": q["icon"], "title": "Misión cumplida", "text": q["title"], "gems": q["reward"]})
+        if all(q["done"] for q in quests) and not chest:
+            STORE.log_event(today(), "quest", "chest", CHEST)
+            add_gems(CHEST)
+            rewards.append({"icon": "🎁", "title": "Cofre del día", "text": "Has cumplido todas las misiones de hoy", "gems": CHEST})
+        have = {r["id"] for r in STORE.query("SELECT id FROM achievements")}
+        stats = None
+        for aid, icon, title, desc, (stat, need) in ACHIEVEMENTS:
+            if aid in have:
+                continue
+            stats = stats or ach_stats()
+            if stats.get(stat, 0) >= need:
+                STORE.execute("INSERT OR IGNORE INTO achievements (id, ts) VALUES (?, ?)", (aid, time.time()))
+                add_gems(ACH_GEMS)
+                rewards.append({"icon": icon, "title": f"Logro: {title}", "text": desc, "gems": ACH_GEMS, "achievement": True})
+        return rewards
+
+
+def apply_freezes():
+    """Si ayer (o anteayer) no practicaste y tienes protectores, se usan solos para salvar la racha."""
+    with GAME_LOCK:
+        s = STORE.settings()
+        inv = int(s.get("freezes") or 0)
+        if inv <= 0:
+            return None
+        frozen = list(s.get("frozen_days") or [])
+        days = active_days()
+        used = []
+        for o in (2, 1):
+            d = day_str(o)
+            if inv <= 0 or days.get(d, 0) >= 10 or d in frozen:
+                continue
+            if streak(frozen + used + [d]) > streak(frozen + used):
+                used.append(d)
+                inv -= 1
+        if not used:
+            return None
+        frozen = sorted(set(frozen + used))[-30:]
+        STORE.set_settings({"freezes": inv, "frozen_days": frozen})
+        return f"🧊 Tu protector de racha ha salvado tu racha ({len(used)} {'día' if len(used) == 1 else 'días'})."
+
+
+def game_state():
+    s = STORE.settings()
+    total = STORE.query("SELECT COALESCE(SUM(xp),0) AS xp FROM sessions")[0]["xp"]
+    quests, chest = quests_today()
+    have = {r["id"]: r["ts"] for r in STORE.query("SELECT id, ts FROM achievements")}
+    days = active_days()
+    frozen = set(s.get("frozen_days") or [])
+    week = [{"day": day_str(o), "on": days.get(day_str(o), 0) >= 10, "frozen": day_str(o) in frozen,
+             "label": "LMXJVSD"[time.localtime(time.time() - o * 86400).tm_wday]} for o in range(6, -1, -1)]
+    return {"streak": streak(), "gems": int(s.get("gems") or 0), "freezes": int(s.get("freezes") or 0),
+            "goal": int(s.get("daily_goal") or 50), "xp_today": xp_on(today()), "xp_total": total,
+            "rank": rank_info(total), "quests": quests, "chest": {"claimed": chest, "gems": CHEST}, "week": week,
+            "boost": max(0, round(float(s.get("xp_boost_until") or 0) - time.time())),
+            "practiced_today": days.get(today(), 0) >= 10,
+            "achievements": [{"id": a, "icon": i, "title": t, "desc": d, "got": a in have, "ts": have.get(a)}
+                             for a, i, t, d, _ in ACHIEVEMENTS],
+            "shop": SHOP}
+
+
+def game():
+    msg = apply_freezes()
+    rewards = settle()
+    st = game_state()
+    st["rewards"] = rewards
+    st["message"] = msg
+    return st
+
+
+def buy(item):
+    with GAME_LOCK:
+        s = STORE.settings()
+        it = next((x for x in SHOP if x["id"] == item), None)
+        if not it:
+            return {"ok": False, "error": "Ese artículo no existe."}
+        gems = int(s.get("gems") or 0)
+        if gems < it["price"]:
+            return {"ok": False, "error": f"Te faltan {it['price'] - gems} 🥨. Las ganas con sesiones, misiones y logros."}
+        if item == "freeze":
+            if int(s.get("freezes") or 0) >= 2:
+                return {"ok": False, "error": "Ya tienes 2 protectores, el máximo."}
+            STORE.set_settings({"freezes": int(s.get("freezes") or 0) + 1, "gems": gems - it["price"]})
+        elif item == "boost":
+            start = max(time.time(), float(s.get("xp_boost_until") or 0))
+            STORE.set_settings({"xp_boost_until": start + 900, "gems": gems - it["price"]})
+        return {"ok": True, "game": game_state()}
+
+
+# ====================================================================== conversación con IA
+def ai_cfg():
+    return ai.config(STORE.settings())
+
+
+def talk_voice(g, region, alt=False):
+    """Voz de Azure para un personaje (mujer/hombre, Alemania/Suiza)."""
+    s = STORE.settings()
+    if region == "ch":
+        return ("de-CH-JanNeural" if g == "m" else "de-CH-LeniNeural")
+    if alt:
+        return "de-DE-ConradNeural" if g == "m" else "de-DE-KatjaNeural"
+    return s.get("talk_voice_m") if g == "m" else s.get("talk_voice_f")
+
+
+def scenario(sid):
+    return next((x for x in CONTENT.talk["scenarios"] if x["id"] == sid), None)
+
+
+def talk_home():
+    cfg = ai_cfg()
+    best = {r["scenario"]: r for r in STORE.query(
+        """SELECT scenario, MAX(CASE WHEN tasks_total > 0 THEN 1 + (2 * tasks_done) / tasks_total ELSE 1 END) AS stars,
+                  COUNT(*) AS n FROM conversations GROUP BY scenario""")}
+    lv = user_level()
+    out = []
+    for sc in CONTENT.talk["scenarios"]:
+        b = best.get(sc["id"])
+        out.append({k: sc[k] for k in ("id", "level", "icon", "title", "partner", "g", "voice", "tasks", "opener")}
+                   | {"stars": min(3, b["stars"]) if b else 0, "times": b["n"] if b else 0,
+                      "challenge": bool(sc["level"]) and LEVELS.index(sc["level"]) > LEVELS.index(lv),
+                      "azure_voice": talk_voice(sc["g"], sc["voice"])})
+    recent = STORE.query("SELECT id, ts, scenario, turns, ok_turns, tasks_done, tasks_total, xp FROM conversations ORDER BY id DESC LIMIT 5")
+    return {"scenarios": out, "ai_ready": cfg["ready"], "ai_label": cfg["label"], "level": lv, "recent": recent,
+            "corrections": bool(STORE.settings().get("ai_corrections", True))}
+
+
+def talk_turn(data):
+    sc = scenario(data.get("scenario"))
+    if not sc:
+        return {"error": "Escena desconocida."}
+    cfg = ai_cfg()
+    if not cfg["ready"]:
+        return {"error": "sin-ia"}
+    s = STORE.settings()
+    # la IA habla al nivel de la escena, pero nunca por encima del tuyo
+    level = user_level()
+    if sc["level"] and LEVELS.index(sc["level"]) < LEVELS.index(level):
+        level = sc["level"]
+    msgs = ai.talk_messages(sc, level, s.get("name", ""), data.get("messages") or [],
+                            bool(s.get("ai_corrections", True)))
+    text, err = ai.chat(cfg, msgs, temperature=0.8)
+    if err:
+        return {"error": err}
+    return ai.clean_turn(ai.parse_json(text), text, len(sc["tasks"]))
+
+
+def talk_finish(data):
+    sc = scenario(data.get("scenario"))
+    if not sc:
+        return {"ok": False}
+    msgs = data.get("messages") or []
+    turns = sum(1 for m in msgs if m.get("role") == "user")
+    corrections = [m for m in msgs if m.get("role") == "user" and m.get("correction")]
+    done = len({int(d) for d in (data.get("done") or []) if str(d).isdigit() and int(d) < len(sc["tasks"])})
+    total = len(sc["tasks"])
+    seconds = int(data.get("seconds") or 0)
+    if turns == 0:
+        return {"ok": True, "xp": 0, "rewards": [], "game": game_state()}
+    xp = min(turns, 12) * 8 + done * 15 + (25 if done >= total else 0)
+    xp, boosted = boost(xp)
+    STORE.execute("""INSERT INTO conversations (ts, day, scenario, turns, ok_turns, tasks_done, tasks_total, xp, seconds, transcript)
+                     VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                  (time.time(), today(), sc["id"], turns, turns - len(corrections), done, total, xp, seconds,
+                   json.dumps(msgs[-60:], ensure_ascii=False)))
+    STORE.execute("INSERT INTO sessions (day, started, finished, seconds, total, correct, xp, kind) VALUES (?,?,?,?,?,?,?,?)",
+                  (today(), time.time() - seconds, time.time(), seconds, turns, turns - len(corrections), xp, "talk"))
+    add_gems(5)
+    rewards = settle()
+    stars = 1 + (2 * done) // total if total else 1
+    return {"ok": True, "xp": xp, "boosted": boosted, "gems": 5, "stars": min(3, stars), "done": done, "total": total,
+            "turns": turns, "corrections": len(corrections), "streak": streak(), "rewards": rewards, "game": game_state()}
+
+
+def talk_test():
+    cfg = ai_cfg()
+    if not cfg["ready"]:
+        return {"ok": False, "error": "Falta la clave." if cfg["needs_key"] else "Falta la dirección del servicio."}
+    text, err = ai.chat(cfg, [{"role": "user", "content": "Antworte nur mit: Hallo! Ich bin bereit."}], temperature=0, timeout=40)
+    return {"ok": not err, "error": err, "text": text, "model": cfg["model"]}
+
+
+# ====================================================================== audios de escucha
+def listen_item(lid):
+    if lid.startswith("b:"):
+        b = next((x for x in CONTENT.talk["listenings"] if x["id"] == lid[2:]), None)
+        if not b:
+            return None
+        d = {k: b[k] for k in ("title", "title_es", "lines", "vocab", "level")}
+        d["speakers"] = {k: dict(v) for k, v in b["speakers"].items()}
+        d["questions"] = b["questions"]
+        d["builtin"] = True
+        best = STORE.query("SELECT MAX(value) AS b FROM events WHERE kind = 'listen' AND ref = ?", (lid,))[0]["b"]
+    elif lid.startswith("u:") and lid[2:].isdigit():
+        rows = STORE.query("SELECT * FROM listenings WHERE id = ?", (int(lid[2:]),))
+        if not rows:
+            return None
+        d = json.loads(rows[0]["data"])
+        d["level"], d["topic"], d["builtin"] = rows[0]["level"], rows[0]["topic"], False
+        best = STORE.query("SELECT MAX(value) AS b FROM events WHERE kind = 'listen' AND ref = ?", (lid,))[0]["b"]
+    else:
+        return None
+    d["id"] = lid
+    d["best"] = best
+    same = d["speakers"]["A"]["g"] == d["speakers"]["B"]["g"]
+    for k, sp in d["speakers"].items():
+        sp["voice"] = talk_voice(sp["g"], "de", alt=same and k == "B")
+    return d
+
+
+def listen_home():
+    items = [listen_item("b:" + b["id"]) for b in CONTENT.talk["listenings"]]
+    for r in STORE.query("SELECT id FROM listenings ORDER BY id DESC LIMIT 30"):
+        items.append(listen_item(f"u:{r['id']}"))
+    items = [{k: i[k] for k in ("id", "title", "title_es", "level", "builtin", "best")} | {"n": len(i["questions"])}
+             for i in items if i]
+    return {"items": items, "topics": CONTENT.talk["topics"], "ai_ready": ai_cfg()["ready"], "level": user_level()}
+
+
+def listen_new(data):
+    cfg = ai_cfg()
+    if not cfg["ready"]:
+        return {"error": "sin-ia"}
+    topic = str(data.get("topic") or "").strip()[:120] or random.choice(CONTENT.talk["topics"])
+    level = data.get("level") if data.get("level") in LEVELS else user_level()
+    text, err = ai.chat(cfg, ai.listen_messages(topic, level), temperature=0.9, timeout=120)
+    if err:
+        return {"error": err}
+    d = ai.clean_listening(ai.parse_json(text))
+    if not d:
+        return {"error": "La IA no ha creado bien el audio. Vuelve a probar."}
+    lid = STORE.execute("INSERT INTO listenings (ts, level, topic, data) VALUES (?,?,?,?)",
+                        (time.time(), level, topic, json.dumps(d, ensure_ascii=False)))
+    return listen_item(f"u:{lid}")
+
+
+def listen_mp3(lid):
+    """Un único MP3 con las dos voces (para escucharlo fuera de la app)."""
+    d = listen_item(lid)
+    if not d:
+        return None, "no-encontrado"
+    rate = float(STORE.settings().get("rate") or 0.95)
+    pct = round((rate - 1) * 100)
+    parts = "".join(f"<voice name='{d['speakers'][sp]['voice']}'><prosody rate='{pct:+d}%'>{xml_esc(de)}</prosody>"
+                    f"<break time='700ms'/></voice>" for sp, de, _ in d["lines"])
+    ssml = f"<speak version='1.0' xml:lang='de-DE'>{parts}</speak>"
+    h = hashlib.sha1(ssml.encode()).hexdigest()
+    path = os.path.join(STORE.dir, "audio", "dlg-" + h + ".mp3")
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return f.read(), None
+    return azure_request(ssml, path, timeout=60)
+
+
+def listen_finish(data):
+    lid = str(data.get("id") or "")
+    if not listen_item(lid):
+        return {"ok": False}
+    correct, total = int(data.get("correct") or 0), int(data.get("total") or 0)
+    seconds = int(data.get("seconds") or 0)
+    xp, boosted = boost(correct * 10 + 20)
+    STORE.log_event(today(), "listen", lid, round(100 * correct / total) if total else 0)
+    STORE.execute("INSERT INTO sessions (day, started, finished, seconds, total, correct, xp, kind) VALUES (?,?,?,?,?,?,?,?)",
+                  (today(), time.time() - seconds, time.time(), seconds, total, correct, xp, "listen"))
+    add_gems(3)
+    rewards = settle()
+    return {"ok": True, "xp": xp, "boosted": boosted, "gems": 3, "streak": streak(), "rewards": rewards, "game": game_state()}
 
 
 # ====================================================================== copias de seguridad
@@ -654,6 +1097,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, "version": VERSION})
             if p == "/api/home":
                 return self._send(200, home())
+            if p == "/api/game":
+                return self._send(200, game())
+            if p == "/api/talk":
+                return self._send(200, talk_home())
+            if p == "/api/listen":
+                return self._send(200, listen_home())
+            if p == "/api/listen/item":
+                d = listen_item(q.get("id", ""))
+                return self._send(200 if d else 404, d or {"error": "no encontrado"})
+            if p == "/api/listen/mp3":
+                audio, err = listen_mp3(q.get("id", ""))
+                if audio:
+                    return self._send(200, audio, "audio/mpeg",
+                                      {"Content-Disposition": 'attachment; filename="deutsch-hoertext.mp3"'})
+                return self._send(404, {"error": err})
             if p == "/api/session":
                 return self._send(200, build_daily())
             if p == "/api/practice":
@@ -669,6 +1127,10 @@ class Handler(BaseHTTPRequestHandler):
                 s["azure_key_set"] = bool(s.get("azure_key"))
                 s["azure_key"] = ""
                 s["azure_voices"] = AZURE_VOICES
+                keys = s.pop("ai_keys", {}) or {}
+                s["ai_keys_set"] = {k: bool(v) for k, v in keys.items()}
+                s["ai_providers"] = {k: {kk: v[kk] for kk in ("label", "note", "model", "key")} for k, v in ai.PROVIDERS.items()}
+                s["ai_ready"] = ai_cfg()["ready"]
                 s["data_dir"] = STORE.dir
                 s["version"] = VERSION
                 return self._send(200, s)
@@ -703,6 +1165,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p == "/api/restore":
                 return self._send(200, restore_backup(self._body()))
+            if p == "/api/stt":
+                return self._send(200, azure_stt(self._body()))
             data = self._json()
             if p == "/api/answer":
                 return self._send(200, answer(data))
@@ -712,6 +1176,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, finish(data))
             if p == "/api/placement":
                 return self._send(200, placement_result(data))
+            if p == "/api/shop":
+                return self._send(200, buy(data.get("item")))
+            if p == "/api/talk/turn":
+                return self._send(200, talk_turn(data))
+            if p == "/api/talk/finish":
+                return self._send(200, talk_finish(data))
+            if p == "/api/talk/test":
+                return self._send(200, talk_test())
+            if p == "/api/listen/new":
+                return self._send(200, listen_new(data))
+            if p == "/api/listen/finish":
+                return self._send(200, listen_finish(data))
             if p == "/api/audio/prefetch":
                 if not PREFETCH["running"]:
                     threading.Thread(target=prefetch_job, daemon=True).start()
@@ -722,6 +1198,17 @@ class Handler(BaseHTTPRequestHandler):
                     data.pop("azure_key")
                 if data.pop("azure_key_clear", False):
                     data["azure_key"] = ""
+                key = data.pop("ai_key", None)
+                clear = data.pop("ai_key_clear", False)
+                for k in PRIVATE:
+                    data.pop(k, None)
+                if key or clear:
+                    keys = dict(STORE.settings().get("ai_keys") or {})
+                    prov = data.get("ai_provider") or STORE.settings().get("ai_provider") or "gemini"
+                    keys[prov] = "" if clear else str(key).strip()
+                    data["ai_keys"] = keys
+                if "daily_goal" in data:
+                    data["daily_goal"] = max(10, min(500, int(data["daily_goal"] or 50)))
                 STORE.set_settings(data)
                 return self._send(200, {"ok": True})
             if p == "/api/notes":

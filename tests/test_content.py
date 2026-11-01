@@ -37,6 +37,29 @@ for iid, it in CONTENT.items.items():
                 assert ex.get("sentence") and ex["sentence"]["de"] and ex["sentence"]["es"], "falta frase traducida"
             except Exception as e:
                 errors.append(f"{iid} / {t}: {e}")
+# conversaciones y audios
+T = CONTENT.talk
+ids = [sc["id"] for sc in T["scenarios"]]
+if len(ids) != len(set(ids)):
+    errors.append("talk.json: ids de escena repetidos")
+for sc in T["scenarios"]:
+    for k in ("id", "icon", "title", "partner", "g", "voice", "role", "setting", "tasks", "opener"):
+        if not sc.get(k):
+            errors.append(f"talk.json: a la escena {sc.get('id')} le falta «{k}»")
+    if sc.get("level") not in ("", "A1", "A2", "B1", "B2") or sc.get("g") not in ("f", "m") or sc.get("voice") not in ("de", "ch"):
+        errors.append(f"talk.json: nivel, género o voz raros en {sc['id']}")
+    if len(sc.get("opener", [])) != 2 or not all(sc["opener"]):
+        errors.append(f"talk.json: la escena {sc['id']} necesita frase inicial y traducción")
+for li in T["listenings"]:
+    if set(li["speakers"]) != {"A", "B"}:
+        errors.append(f"talk.json: el audio {li['id']} necesita los hablantes A y B")
+    for row in li["lines"]:
+        if len(row) != 3 or row[0] not in ("A", "B") or not row[1] or not row[2]:
+            errors.append(f"talk.json: línea incompleta en {li['id']}: {row}")
+    for q, opts, ans in li["questions"]:
+        if not (0 <= ans < len(opts)) or len(set(opts)) != len(opts):
+            errors.append(f"talk.json: pregunta mal formada en {li['id']}: {q}")
+print(f"{len(T['scenarios'])} escenas de conversación, {len(T['listenings'])} audios")
 print(f"{len(CONTENT.items)} elementos, {count} ejercicios generados")
 if errors:
     print("ERRORES:"); [print(" -", e) for e in errors[:40]]

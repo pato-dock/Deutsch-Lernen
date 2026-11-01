@@ -21,7 +21,26 @@ DEFAULTS = {
     "theme": "light",
     "show_timer": True,
     "name": "",
+    # juego
+    "gems": 0,
+    "freezes": 0,
+    "frozen_days": [],
+    "daily_goal": 50,
+    "sound": True,
+    "xp_boost_until": 0,
+    # conversación con IA
+    "ai_provider": "gemini",
+    "ai_keys": {},
+    "ai_model": "",
+    "ai_url": "",
+    "ai_corrections": True,
+    "call_mode": True,
+    "talk_voice_f": "de-DE-SeraphinaMultilingualNeural",
+    "talk_voice_m": "de-DE-FlorianMultilingualNeural",
 }
+
+# ajustes que solo cambia el servidor (la interfaz no puede escribirlos directamente)
+PRIVATE = {"gems", "freezes", "frozen_days", "xp_boost_until", "ai_keys"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cards (
@@ -45,6 +64,21 @@ CREATE TABLE IF NOT EXISTS notes (
   color TEXT DEFAULT 'amber', created REAL, updated REAL
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL,
+  ref TEXT, value INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS events_day ON events(day, kind);
+CREATE TABLE IF NOT EXISTS achievements (id TEXT PRIMARY KEY, ts REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS conversations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, day TEXT NOT NULL, scenario TEXT NOT NULL,
+  turns INTEGER, ok_turns INTEGER, tasks_done INTEGER, tasks_total INTEGER, xp INTEGER, seconds INTEGER,
+  transcript TEXT
+);
+CREATE TABLE IF NOT EXISTS listenings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, level TEXT, topic TEXT, data TEXT NOT NULL,
+  best INTEGER DEFAULT -1
+);
 """
 
 
@@ -90,6 +124,12 @@ class Store:
             for k, v in values.items():
                 if k in DEFAULTS:
                     self.db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (k, json.dumps(v)))
+            self.db.commit()
+
+    def log_event(self, day, kind, ref="", value=0):
+        with self.lock:
+            self.db.execute("INSERT INTO events (ts, day, kind, ref, value) VALUES (?,?,?,?,?)",
+                            (time.time(), day, kind, ref, int(value)))
             self.db.commit()
 
     # ---------------------------------------------------------------- tarjetas
@@ -140,11 +180,14 @@ class Store:
     def export(self):
         with self.lock:
             out = {}
-            for t in ("cards", "answers", "sessions", "notes", "settings"):
+            for t in ("cards", "answers", "sessions", "notes", "settings", "events", "achievements",
+                      "conversations", "listenings"):
                 out[t] = [dict(r) for r in self.db.execute(f"SELECT * FROM {t}")]
             for s in out["settings"]:
                 if s["key"] == "azure_key":
                     s["value"] = json.dumps("")
+                if s["key"] == "ai_keys":
+                    s["value"] = json.dumps({})
             return out
 
     def backup_to(self, dest):
