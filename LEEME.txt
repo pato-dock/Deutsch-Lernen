@@ -1,0 +1,29 @@
+DEUTSCH LERNEN · Fase 1
+=======================
+
+INSTALAR (una sola vez, 1–3 minutos)
+1. Abre la aplicación «Terminal» (Cmd + Espacio, escribe «Terminal» y pulsa Enter).
+2. Escribe  bash  seguido de un espacio.
+3. Arrastra el archivo «Instalar.command» de esta carpeta dentro de la ventana de Terminal.
+4. Pulsa Enter y espera a que aparezca «¡Listo!». La app se abrirá en tu navegador.
+
+(También puedes hacer doble clic en «Instalar.command». Si macOS dice que no puede
+verificarlo, ve a Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente».)
+
+USAR
+- Abre «Deutsch Lernen» desde su icono en el Dock (el instalador lo añade solo),
+  el Escritorio o Launchpad. Se abre en su propia ventana si tienes Chrome, Edge,
+  Brave o Arc; si no, en Safari.
+- Cuando termines, cierra la ventana:
+  el programa se apaga solo a los 20 minutos.
+
+ACTUALIZAR
+- Cuando te envíe una fase nueva, ejecuta su «Instalar.command» de la misma forma.
+  Tu progreso y tus apuntes se conservan.
+
+TUS DATOS
+- Se guardan solo en tu Mac: ~/Library/Application Support/DeutschLernen/datos
+- En la app: Ajustes → «Descargar copia de seguridad».
+
+DESINSTALAR
+- Ejecuta «Desinstalar.command». Te preguntará si quieres conservar tu progreso.

@@ -1,0 +1,64 @@
+{
+  "levels": [
+    {"id": "A1", "title": "A1 · Primeros pasos", "color": "lvA1",
+     "cando": ["Presentarte y decir de dónde eres y a qué te dedicas.", "Pedir en una panadería o en una cafetería.", "Comprar un billete y preguntar por una vía.", "Entender carteles, horarios y mensajes muy sencillos."],
+     "exam": "Goethe-Zertifikat A1: Start Deutsch 1",
+     "units": [
+       {"title": "Presentarse", "vocab": ["familie"], "grammar": ["genero", "praesens"], "phrases": ["alltag"]},
+       {"title": "Comer y comprar", "vocab": ["essen", "kleidung"], "grammar": ["akkusativ"], "phrases": []},
+       {"title": "Vivir aquí", "vocab": ["wohnung", "farben", "adjektive"], "grammar": ["fragen"], "phrases": []},
+       {"title": "Moverse", "vocab": ["verkehr", "zeit"], "grammar": ["trennbar", "modal"], "phrases": ["unterwegs"]}
+     ]},
+    {"id": "A2", "title": "A2 · Vida cotidiana", "color": "lvA2",
+     "cando": ["Contar lo que hiciste el fin de semana.", "Ir al médico y explicar qué te duele.", "Hacer trámites sencillos y rellenar formularios.", "Hablar de tu trabajo y de tus tareas."],
+     "exam": "Goethe-Zertifikat A2 / telc Deutsch A2",
+     "units": [
+       {"title": "Salud", "vocab": ["koerper"], "grammar": ["perfekt"], "phrases": []},
+       {"title": "Trabajo y oficina", "vocab": ["buero"], "grammar": ["dativ", "nebensatz"], "phrases": []},
+       {"title": "Trámites", "vocab": ["behoerden"], "grammar": ["wechsel"], "phrases": []},
+       {"title": "Tiempo libre", "vocab": ["freizeit"], "grammar": ["komparativ"], "phrases": []}
+     ]},
+    {"id": "B1", "title": "B1 · Trabajo y autonomía", "color": "lvB1",
+     "cando": ["Presentar tu portfolio y hablar de tu experiencia.", "Escribir un correo formal a un cliente.", "Dar y pedir feedback sobre un diseño.", "Seguir una reunión y dar tu opinión."],
+     "exam": "Goethe-Zertifikat B1 / telc Deutsch B1",
+     "units": [
+       {"title": "Buscar trabajo", "vocab": ["bewerbung"], "grammar": ["praeteritum", "konjunktiv2"], "phrases": ["interview"]},
+       {"title": "Diseño y branding", "vocab": ["grafik"], "grammar": ["adjektiv"], "phrases": ["feedback"]},
+       {"title": "Motion e imprenta", "vocab": ["motion", "druck"], "grammar": ["passiv"], "phrases": []},
+       {"title": "Clientes y UX", "vocab": ["meetings", "uxui"], "grammar": ["relativ", "praepverben"], "phrases": ["arbeit", "idiome"]}
+     ]},
+    {"id": "B2", "title": "B2 · Fluidez profesional", "color": "lvB2",
+     "cando": ["Argumentar a favor y en contra en una reunión.", "Entender noticias y textos técnicos.", "Redactar textos formales con buen registro.", "Explicar procesos de restauración o producción."],
+     "exam": "Goethe-Zertifikat B2 / telc Deutsch B2",
+     "units": [
+       {"title": "Obra y restauración", "vocab": ["restaurierung"], "grammar": ["genitiv"], "phrases": []},
+       {"title": "Opinar y argumentar", "vocab": ["gesellschaft"], "grammar": ["konnektoren", "nominal", "konjunktiv1"], "phrases": []}
+     ]}
+  ],
+  "placement": [
+    ["A1", "Ich ___ aus Spanien.", ["komme", "kommst", "kommt", "kommen"], 0],
+    ["A1", "Was bedeutet «die Rechnung»?", ["la cuenta", "el recibo de la luz", "la receta", "el cálculo"], 0],
+    ["A1", "___ Brötchen, bitte.", ["Ein", "Eine", "Einen", "Einer"], 0],
+    ["A1", "Wann ___ du auf?", ["stehst", "steht", "aufstehst", "stehen"], 0],
+    ["A1", "Ich habe ___ Zeit.", ["keine", "nicht", "kein", "keinen"], 0],
+    ["A1", "___ wohnst du?", ["Wo", "Wer", "Was", "Wie viel"], 0],
+    ["A2", "Gestern ___ ich nach Zürich gefahren.", ["bin", "habe", "war", "hat"], 0],
+    ["A2", "Ich fahre mit ___ Fahrrad.", ["dem", "den", "das", "der"], 0],
+    ["A2", "Ich lerne Deutsch, weil ich in Basel ___.", ["arbeiten will", "will arbeiten", "arbeite will", "arbeiten wollen"], 0],
+    ["A2", "Das Bild hängt an ___ Wand.", ["der", "die", "den", "dem"], 0],
+    ["A2", "Mein Bruder ist ___ als ich.", ["älter", "alter", "mehr alt", "am ältesten"], 0],
+    ["A2", "Kannst du ___ helfen?", ["mir", "mich", "ich", "meiner"], 0],
+    ["B1", "Ich habe einen ___ Laptop gekauft.", ["neuen", "neuer", "neue", "neues"], 0],
+    ["B1", "Wenn ich Zeit ___, würde ich mehr reisen.", ["hätte", "habe", "hatte", "hat"], 0],
+    ["B1", "Der Kunde, ___ ich gestern getroffen habe, …", ["den", "der", "dem", "dessen"], 0],
+    ["B1", "Das Plakat ___ morgen gedruckt.", ["wird", "ist", "hat", "wurde gewesen"], 0],
+    ["B1", "Ich warte noch ___ die Freigabe.", ["auf", "für", "an", "um"], 0],
+    ["B1", "Was bedeutet «die Freigabe» en una agencia?", ["la aprobación", "el día libre", "la entrega gratuita", "la liberación de un archivo"], 0],
+    ["B2", "___ des schlechten Wetters fand das Fest statt.", ["Trotz", "Wegen", "Obwohl", "Deshalb"], 0],
+    ["B2", "Je früher wir anfangen, ___ besser.", ["desto", "als", "so", "wie"], 0],
+    ["B2", "Er sagte, er ___ keine Zeit.", ["habe", "hat", "hätte gehabt", "haben"], 0],
+    ["B2", "Nach ___ der Unterlagen melden wir uns.", ["Prüfung", "prüfen", "geprüft", "Prüfen"], 0],
+    ["B2", "Das Gebäude steht unter ___.", ["Denkmalschutz", "Denkmalpflege machen", "Schutzdenkmal", "Denkmälern"], 0],
+    ["B2", "Ich spreche ___ Deutsch ___ Französisch fließend.", ["weder / noch", "sowohl / noch", "entweder / als auch", "je / desto"], 0]
+  ]
+}

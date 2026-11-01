@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+.datos-dev/
+app/.datos-dev/
+app/static/fonts/*.ttf
+*.zip
